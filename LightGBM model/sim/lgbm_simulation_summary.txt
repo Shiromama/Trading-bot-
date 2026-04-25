@@ -1,0 +1,47 @@
+========== LIGHTGBM SIMULATION SUMMARY ==========
+Starting balance: $18.44
+Ending balance:   $285.47
+Net profit:       $267.03
+Return:           1448.11%
+Max drawdown:     -44.00%
+Total trades:     305
+Win rate:         68.85%
+Average PnL:      $0.8755
+Avg return/trade: 0.000796
+Longest win streak:  40
+Longest loss streak: 12
+Stop-loss hits:      2
+Take-profit hits:    2
+Final-horizon exits: 301
+Skipped for margin:  0
+Blown account:       False
+
+========== ASSUMPTIONS ==========
+Account leverage: 2000x
+Lot size: 0.01
+Contract size: 100000
+Reference price fallback: 1.1
+Stop loss = 10.00% of current balance
+Risk reward ratio = 1:2.00
+Use take profit: True
+Confidence threshold: 0.55
+Only trade signals: True
+Flat broker fee per trade: $0.00
+Average position notional: $1100.00
+Average margin required:   $0.5500
+Average SL amount:         $11.73
+Average TP amount:         $23.45
+
+Note:
+- This simulator uses final-horizon returns from the dataset.
+- SL/TP are applied as money-based caps on those returns.
+- It does not know the exact intrabar path unless your dataset includes it.
+
+========== THRESHOLD SWEEP ==========
+ threshold  trades  ending_balance  net_profit  return_pct  max_drawdown_pct  win_rate_pct  avg_pnl  avg_return_per_trade  stop_loss_hits  take_profit_hits  final_horizon_exits  skipped_for_margin  blown_account
+      0.45     420      307.118780  288.678780 1565.503147        -48.485833     64.047619 0.687330              0.000625               0                 0                  420                   0          False
+      0.50     355      288.913721  270.473721 1466.777230        -44.194858     65.915493 0.761898              0.000693               1                 0                  354                   0          False
+      0.55     305      285.470739  267.030739 1448.105963        -44.002244     68.852459 0.875511              0.000796               2                 2                  301                   0          False
+      0.60     247      297.629636  279.189636 1514.043580        -32.494463     75.303644 1.130322              0.001028               1                 0                  246                   0          False
+      0.65     199      294.202699  275.762699 1495.459323         -5.730397     80.904523 1.385742              0.001260               0                 0                  199                   0          False
+      0.70     150      263.426874  244.986874 1328.562224         -4.266337     87.333333 1.633246              0.001485               0                 0                  150                   0          False
