@@ -1,2 +1,2 @@
 # Trading-bot-
-Trading bot using Random forest and/or gradient boosting 
+trying to build a trading bot using Random forest and/or gradient boosting 
