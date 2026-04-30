@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 import numpy as np
 import joblib
@@ -8,19 +9,43 @@ from sklearn.metrics import classification_report, confusion_matrix
 # ========== SETTINGS ==========
 ONLY_TRADE_SIGNALS = True
 THRESHOLD_GRID = [0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75]
+ENTRY_STYLE_LABELS = [-3, -2, -1, 0, 1, 2, 3]
+ENTRY_STYLE_NAMES = {
+    -3: "SELL_WAIT_OB",
+    -2: "SELL_WAIT_FVG",
+    -1: "SELL_NOW",
+     0: "NO_TRADE",
+     1: "BUY_NOW",
+     2: "BUY_WAIT_FVG",
+     3: "BUY_WAIT_OB",
+}
 
-# These columns are kept in the dataset for evaluation/simulation/live planning,
-# but are NOT used as training features.
-EXCLUDE_COLS = [
+# Columns that may exist in the dataset but must NOT be used for training.
+# These are either labels, future outcomes, candidate trade results, or execution/evaluation helpers.
+MANUAL_EXCLUDE_COLS = [
+    # Main targets / label helpers
     "target",
+    "target_entry_style",
+    "target_direction",
+    "old_direction_target",
+    "entry_style_name",
+    "entry_style_return",
     "future_return",
 
-    # Spread/evaluation columns
+    # Candidate entry-style returns produced by the labeler
+    "ret_buy_now",
+    "ret_buy_wait_fvg",
+    "ret_buy_wait_ob",
+    "ret_sell_now",
+    "ret_sell_wait_fvg",
+    "ret_sell_wait_ob",
+
+    # Spread / evaluation columns
     "spread_points",
     "spread_price",
     "spread_return",
 
-    # Dynamic SL/TP planner columns
+    # Dynamic SL/TP planner columns; kept for live/sim use, not model input
     "sl_atr_multiplier",
     "dynamic_sl_price_distance",
     "dynamic_tp_price_distance",
@@ -31,13 +56,30 @@ EXCLUDE_COLS = [
     "tp_distance_pct",
 ]
 
+# Extra safety net: if future dataset builders add similar result/label columns,
+# these patterns keep them out of X automatically.
+LEAKAGE_PATTERNS = [
+    r"^target",
+    r"^old_direction_target$",
+    r"^future_",
+    r"^entry_style",
+    r"^ret_",
+    r"_return$",              # catches target/result return columns; 1m_return etc handled below by allowlist exception
+]
+
+# These are legitimate historical feature names ending in _return.
+ALLOW_RETURN_FEATURE_PATTERNS = [
+    r"^1m_return$", r"^5m_return$", r"^15m_return$",
+    r"^1m_log_return$", r"^5m_log_return$", r"^15m_log_return$",
+]
+
 # ========== LOAD DATASET ==========
 SCRIPT_DIR = Path(__file__).resolve().parent
 dataset_path = SCRIPT_DIR / "training_dataset.csv"
 
 if not dataset_path.exists():
     raise FileNotFoundError(
-        f"Could not find {dataset_path}. Run the updated dataset builder first."
+        f"Could not find {dataset_path}. Run the fixed dataset builder first."
     )
 
 df = pd.read_csv(dataset_path, index_col=0, parse_dates=True)
@@ -46,31 +88,58 @@ df.sort_index(inplace=True)
 print(f"Dataset date range: {df.index.min()} -> {df.index.max()}")
 print(f"Dataset raw shape: {df.shape}")
 
-# ========== FEATURES / TARGET ==========
-missing_exclude = [col for col in EXCLUDE_COLS if col not in df.columns]
+# ========== TARGET ==========
+if "target_entry_style" in df.columns:
+    target_col = "target_entry_style"
+elif "target" in df.columns:
+    target_col = "target"
+else:
+    raise ValueError("Dataset has no target_entry_style or target column.")
 
-if missing_exclude:
-    print("[WARNING] Some excluded columns are missing:")
-    print(missing_exclude)
-    print("Continuing anyway...")
+y = df[target_col].astype(int)
 
-actual_exclude_cols = [col for col in EXCLUDE_COLS if col in df.columns]
+# ========== FEATURE SELECTION / LEAKAGE GUARD ==========
+def matches_any(name: str, patterns: list[str]) -> bool:
+    return any(re.search(p, name) for p in patterns)
 
+def is_allowed_return_feature(name: str) -> bool:
+    return matches_any(name, ALLOW_RETURN_FEATURE_PATTERNS)
+
+auto_exclude_cols = []
+for col in df.columns:
+    if col in MANUAL_EXCLUDE_COLS:
+        auto_exclude_cols.append(col)
+        continue
+    if matches_any(col, LEAKAGE_PATTERNS) and not is_allowed_return_feature(col):
+        auto_exclude_cols.append(col)
+
+actual_exclude_cols = sorted(set(c for c in auto_exclude_cols if c in df.columns))
 X = df.drop(columns=actual_exclude_cols)
-y = df["target"]
 
-# Keep numeric only.
+# Keep numeric features only. This also drops entry_style_name if it somehow was not excluded.
 X = X.select_dtypes(include=[np.number]).copy()
 
-# Clean bad values.
+# Clean bad numeric values.
 X.replace([np.inf, -np.inf], np.nan, inplace=True)
 
+# Keep rows where the model inputs and target are valid.
 valid_rows = X.notna().all(axis=1) & y.notna()
 X = X.loc[valid_rows]
 y = y.loc[valid_rows]
 df = df.loc[valid_rows]
 
+# Final paranoia check: fail loudly if known leakage columns reached X.
+leakage_left = [
+    c for c in X.columns
+    if (matches_any(c, LEAKAGE_PATTERNS) and not is_allowed_return_feature(c))
+]
+if leakage_left:
+    raise ValueError(
+        "Potential leakage columns are still in training features: " + str(leakage_left[:50])
+    )
+
 print(f"Loaded dataset: {dataset_path}")
+print(f"Training target column: {target_col}")
 print(f"Rows after cleaning: {len(df)}")
 print(f"Feature count: {X.shape[1]}")
 
@@ -92,12 +161,6 @@ y_val = y.iloc[train_end:val_end]
 X_test = X.iloc[val_end:]
 y_test = y.iloc[val_end:]
 
-val_future_return = df.iloc[train_end:val_end]["future_return"].values
-val_spread_return = df.iloc[train_end:val_end]["spread_return"].values
-
-test_future_return = df.iloc[val_end:]["future_return"].values
-test_spread_return = df.iloc[val_end:]["spread_return"].values
-
 print("\nTrain shape:", X_train.shape)
 print("Val shape:", X_val.shape)
 print("Test shape:", X_test.shape)
@@ -114,7 +177,6 @@ print(y_test.value_counts().sort_index())
 # ========== MODEL ==========
 model = LGBMClassifier(
     objective="multiclass",
-    num_class=3,
     n_estimators=1000,
     learning_rate=0.01,
     num_leaves=47,
@@ -141,9 +203,10 @@ model.fit(
 )
 
 print(f"\nBest iteration: {model.best_iteration_}")
+print("Model classes:", list(model.classes_))
 
-# ========== HELPER ==========
-def make_prob_df(X_part, y_part, future_return, spread_return):
+# ========== HELPERS ==========
+def make_prob_df(X_part: pd.DataFrame, y_part: pd.Series, source_df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
     pred = model.predict(X_part)
     prob = model.predict_proba(X_part)
     class_order = model.classes_
@@ -157,29 +220,88 @@ def make_prob_df(X_part, y_part, future_return, spread_return):
     out["predicted_class"] = pred
     out["true_class"] = y_part.values
     out["max_confidence"] = prob.max(axis=1)
-    out["future_return"] = future_return
-    out["spread_return"] = spread_return
+    out["predicted_name"] = pd.Series(pred, index=X_part.index).map(ENTRY_STYLE_NAMES)
+    out["true_name"] = pd.Series(y_part.values, index=X_part.index).map(ENTRY_STYLE_NAMES)
+
+    # Keep these only for evaluation/reporting; they were excluded from training above.
+    eval_cols = [
+        "ret_buy_now",
+        "ret_buy_wait_fvg",
+        "ret_buy_wait_ob",
+        "ret_sell_now",
+        "ret_sell_wait_fvg",
+        "ret_sell_wait_ob",
+        "entry_style_return",
+        "future_return",
+        "spread_return",
+    ]
+    for col in eval_cols:
+        if col in source_df.columns:
+            out[col] = source_df.loc[X_part.index, col].values
 
     return out, pred
 
+
+def predicted_entry_return(frame: pd.DataFrame) -> pd.Series:
+    """Return the simulated candidate return corresponding to each predicted entry-style class."""
+    ret = pd.Series(0.0, index=frame.index)
+    mapping = {
+        1: "ret_buy_now",
+        2: "ret_buy_wait_fvg",
+        3: "ret_buy_wait_ob",
+        -1: "ret_sell_now",
+        -2: "ret_sell_wait_fvg",
+        -3: "ret_sell_wait_ob",
+    }
+    for cls, col in mapping.items():
+        if col in frame.columns:
+            mask = frame["predicted_class"] == cls
+            ret.loc[mask] = frame.loc[mask, col].fillna(-999.0)
+    return ret
+
+
+def summarize_trade_results(frame: pd.DataFrame, title: str) -> dict:
+    if len(frame) == 0:
+        print(f"\n========== {title} ==========")
+        print("No trades passed the filter.")
+        return {"trades": 0, "win_rate": 0.0, "avg_return": 0.0, "total_return": 0.0}
+
+    frame["strategy_return"] = predicted_entry_return(frame)
+    frame["win"] = frame["strategy_return"] > 0
+
+    total_trades = len(frame)
+    win_rate = float(frame["win"].mean())
+    avg_return = float(frame["strategy_return"].mean())
+    total_return = float(frame["strategy_return"].sum())
+
+    print(f"\n========== {title} ==========")
+    print(f"Total trades: {total_trades}")
+    print(f"Win rate: {win_rate:.4f}")
+    print(f"Average return per trade: {avg_return:.6f}")
+    print(f"Total raw return sum: {total_return:.6f}")
+
+    return {
+        "trades": total_trades,
+        "win_rate": win_rate,
+        "avg_return": avg_return,
+        "total_return": total_return,
+    }
+
 # ========== VALIDATION ==========
-val_prob_df, val_pred = make_prob_df(
-    X_val,
-    y_val,
-    val_future_return,
-    val_spread_return
-)
+val_prob_df, val_pred = make_prob_df(X_val, y_val, df)
+
+labels_for_report = [c for c in ENTRY_STYLE_LABELS if c in sorted(set(y_val.unique()) | set(val_pred))]
 
 print("\n========== RAW VALIDATION RESULTS ==========")
 print("\nClassification Report:")
-print(classification_report(y_val, val_pred, digits=4, zero_division=0))
+print(classification_report(y_val, val_pred, labels=labels_for_report, digits=4, zero_division=0))
 
 print("\nConfusion Matrix:")
-print(confusion_matrix(y_val, val_pred, labels=[-1, 0, 1]))
+print(confusion_matrix(y_val, val_pred, labels=labels_for_report))
+print("Labels:", labels_for_report)
 
 # ========== THRESHOLD SWEEP ==========
 print("\n========== VALIDATION THRESHOLD SWEEP ==========")
-
 threshold_results = []
 
 for threshold in THRESHOLD_GRID:
@@ -194,20 +316,11 @@ for threshold in THRESHOLD_GRID:
             "trades": 0,
             "win_rate": 0.0,
             "avg_return": 0.0,
-            "total_return": 0.0
+            "total_return": 0.0,
         })
         continue
 
-    temp["strategy_return"] = 0.0
-
-    temp.loc[temp["predicted_class"] == 1, "strategy_return"] = (
-        temp["future_return"] - temp["spread_return"]
-    )
-
-    temp.loc[temp["predicted_class"] == -1, "strategy_return"] = (
-        -temp["future_return"] - temp["spread_return"]
-    )
-
+    temp["strategy_return"] = predicted_entry_return(temp)
     temp["win"] = temp["strategy_return"] > 0
 
     threshold_results.append({
@@ -215,7 +328,7 @@ for threshold in THRESHOLD_GRID:
         "trades": len(temp),
         "win_rate": temp["win"].mean(),
         "avg_return": temp["strategy_return"].mean(),
-        "total_return": temp["strategy_return"].sum()
+        "total_return": temp["strategy_return"].sum(),
     })
 
 threshold_df = pd.DataFrame(threshold_results)
@@ -230,19 +343,16 @@ BEST_THRESHOLD = float(best_row["threshold"])
 print(f"\nBest validation threshold selected: {BEST_THRESHOLD}")
 
 # ========== TEST ==========
-test_prob_df, test_pred = make_prob_df(
-    X_test,
-    y_test,
-    test_future_return,
-    test_spread_return
-)
+test_prob_df, test_pred = make_prob_df(X_test, y_test, df)
+labels_for_test_report = [c for c in ENTRY_STYLE_LABELS if c in sorted(set(y_test.unique()) | set(test_pred))]
 
 print("\n========== RAW TEST RESULTS ==========")
 print("\nClassification Report:")
-print(classification_report(y_test, test_pred, digits=4, zero_division=0))
+print(classification_report(y_test, test_pred, labels=labels_for_test_report, digits=4, zero_division=0))
 
 print("\nConfusion Matrix:")
-print(confusion_matrix(y_test, test_pred, labels=[-1, 0, 1]))
+print(confusion_matrix(y_test, test_pred, labels=labels_for_test_report))
+print("Labels:", labels_for_test_report)
 
 filtered_test = test_prob_df[test_prob_df["max_confidence"] >= BEST_THRESHOLD].copy()
 
@@ -258,11 +368,19 @@ if len(filtered_test) == 0:
 else:
     print("\nFiltered Prediction Distribution:")
     print(filtered_test["predicted_class"].value_counts().sort_index())
+    print("\nFiltered Prediction Names:")
+    print(filtered_test["predicted_name"].value_counts())
+
+    filtered_labels = [
+        c for c in ENTRY_STYLE_LABELS
+        if c in sorted(set(filtered_test["true_class"].unique()) | set(filtered_test["predicted_class"].unique()))
+    ]
 
     print("\nFiltered Classification Report:")
     print(classification_report(
         filtered_test["true_class"],
         filtered_test["predicted_class"],
+        labels=filtered_labels,
         digits=4,
         zero_division=0
     ))
@@ -271,45 +389,32 @@ else:
     print(confusion_matrix(
         filtered_test["true_class"],
         filtered_test["predicted_class"],
-        labels=[-1, 0, 1]
+        labels=filtered_labels
     ))
+    print("Labels:", filtered_labels)
 
-    filtered_test["strategy_return"] = 0.0
-
-    filtered_test.loc[filtered_test["predicted_class"] == 1, "strategy_return"] = (
-        filtered_test["future_return"] - filtered_test["spread_return"]
-    )
-
-    filtered_test.loc[filtered_test["predicted_class"] == -1, "strategy_return"] = (
-        -filtered_test["future_return"] - filtered_test["spread_return"]
-    )
-
-    filtered_test["win"] = filtered_test["strategy_return"] > 0
-
-    total_trades = len(filtered_test)
-    win_rate = filtered_test["win"].mean()
-    avg_return = filtered_test["strategy_return"].mean()
-    total_return = filtered_test["strategy_return"].sum()
-
-    print("\n========== FINAL TEST TRADE EVALUATION ==========")
-    print(f"Total trades: {total_trades}")
-    print(f"Win rate: {win_rate:.4f}")
-    print(f"Average return per trade: {avg_return:.6f}")
-    print(f"Total raw return sum: {total_return:.6f}")
+    summarize_trade_results(filtered_test, "FINAL TEST TRADE EVALUATION")
 
     print("\nTop 10 filtered predictions:")
-    print(filtered_test[[
+    cols_to_show = [
         "predicted_class",
+        "predicted_name",
         "true_class",
+        "true_name",
         "max_confidence",
-        "future_return",
-        "spread_return",
-        "strategy_return"
-    ]].sort_values("max_confidence", ascending=False).head(10))
+        "strategy_return",
+        "ret_buy_now",
+        "ret_buy_wait_fvg",
+        "ret_buy_wait_ob",
+        "ret_sell_now",
+        "ret_sell_wait_fvg",
+        "ret_sell_wait_ob",
+    ]
+    cols_to_show = [c for c in cols_to_show if c in filtered_test.columns]
+    print(filtered_test[cols_to_show].sort_values("max_confidence", ascending=False).head(10))
 
 # ========== FEATURE IMPORTANCE ==========
-feature_importance = pd.Series(model.feature_importances_, index=X.columns)
-feature_importance = feature_importance.sort_values(ascending=False)
+feature_importance = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
 
 print("\nTop 40 Features:")
 print(feature_importance.head(40))
@@ -322,8 +427,41 @@ indicator_importance = feature_importance[
     )
 ]
 
+ob_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "ob|breaker|dist_to_bull|dist_to_bear|near_15m|near_1m",
+        case=False,
+        regex=True
+    )
+]
+
+fvg_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "fvg|dist_to_bull_fvg|dist_to_bear_fvg|near_15m_bull_fvg|near_15m_bear_fvg|near_1m_bull_fvg|near_1m_bear_fvg",
+        case=False,
+        regex=True
+    )
+]
+
+structure_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "bos|choch|fractal|structure_",
+        case=False,
+        regex=True
+    )
+]
+
 print("\nTop Indicator / Regime Features:")
 print(indicator_importance.head(30))
+
+print("\nTop Order Block / Breaker Block Features:")
+print(ob_importance.head(30))
+
+print("\nTop Fair Value Gap Features:")
+print(fvg_importance.head(30))
+
+print("\nTop Fractal BOS / CHoCH Structure Features:")
+print(structure_importance.head(30))
 
 # ========== SAVE OUTPUTS ==========
 model_path = SCRIPT_DIR / "lgbm_model.pkl"
@@ -332,19 +470,26 @@ validation_thresholds_path = SCRIPT_DIR / "lgbm_validation_threshold_sweep.csv"
 test_results_path = SCRIPT_DIR / "lgbm_filtered_test_predictions.csv"
 feature_importance_path = SCRIPT_DIR / "lgbm_feature_importance.csv"
 indicator_importance_path = SCRIPT_DIR / "lgbm_indicator_feature_importance.csv"
+ob_importance_path = SCRIPT_DIR / "lgbm_ob_feature_importance.csv"
+fvg_importance_path = SCRIPT_DIR / "lgbm_fvg_feature_importance.csv"
+structure_importance_path = SCRIPT_DIR / "lgbm_structure_feature_importance.csv"
 metadata_path = SCRIPT_DIR / "lgbm_training_metadata.pkl"
 
 joblib.dump(model, model_path)
 joblib.dump(list(X.columns), features_path)
-
 threshold_df.to_csv(validation_thresholds_path, index=False)
 feature_importance.to_csv(feature_importance_path, header=["importance"])
 indicator_importance.to_csv(indicator_importance_path, header=["importance"])
+ob_importance.to_csv(ob_importance_path, header=["importance"])
+fvg_importance.to_csv(fvg_importance_path, header=["importance"])
+structure_importance.to_csv(structure_importance_path, header=["importance"])
 
 metadata = {
     "best_threshold": BEST_THRESHOLD,
     "feature_count": X.shape[1],
     "classes": list(model.classes_),
+    "entry_style_names": ENTRY_STYLE_NAMES,
+    "target_col": target_col,
     "only_trade_signals": ONLY_TRADE_SIGNALS,
     "threshold_grid": THRESHOLD_GRID,
     "train_rows": len(X_train),
@@ -354,9 +499,12 @@ metadata = {
     "uses_dynamic_sl_tp_dataset": True,
     "uses_htf_bias_strength_features": True,
     "uses_htf_safe_backward_merge_dataset": True,
-    "note": "Dynamic SL/TP columns are saved in the dataset but excluded from model training. Higher timeframe features are expected to be calculated on original 5m/15m candles, then backward-merged into 1m rows to avoid leakage."
+    "uses_order_block_breaker_features": True,
+    "uses_fair_value_gap_features": True,
+    "uses_fractal_bos_choch_structure_features": True,
+    "uses_entry_style_target": True,
+    "note": "Fixed training script: excludes leakage/result columns, evaluates all 7 entry-style classes, computes returns using the predicted class candidate return, and reports fractal BOS/CHoCH structure feature importance."
 }
-
 joblib.dump(metadata, metadata_path)
 
 if len(filtered_test) > 0:
@@ -367,6 +515,8 @@ print(f"Feature list saved to: {features_path}")
 print(f"Validation threshold sweep saved to: {validation_thresholds_path}")
 print(f"Feature importance saved to: {feature_importance_path}")
 print(f"Indicator feature importance saved to: {indicator_importance_path}")
+print(f"Order block feature importance saved to: {ob_importance_path}")
+print(f"Fair value gap feature importance saved to: {fvg_importance_path}")
 print(f"Training metadata saved to: {metadata_path}")
 
 if len(filtered_test) > 0:
