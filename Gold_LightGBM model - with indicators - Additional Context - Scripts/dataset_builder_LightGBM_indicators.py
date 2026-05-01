@@ -6,9 +6,34 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 print(f"Script directory: {SCRIPT_DIR}")
 
-# BTCUSDm has Digits = 2, so 1 point = 0.01
+# XAUUSDm usually has Digits = 2, so 1 point = 0.01.
+# If you switch symbols, update POINT_VALUE and the profit conversion settings below.
 POINT_VALUE = 0.01
 EPS = 1e-9
+
+# ========== LIVE-STYLE SL/TP LABELING SETTINGS ==========
+# These make the dataset label trades closer to how the live bot places SL/TP.
+# Live bot logic:
+#   risk_usd   = balance * STOP_LOSS_ACCOUNT_FRACTION
+#   reward_usd = risk_usd * RISK_REWARD_RATIO
+#   SL/TP price is calculated from that money risk and lot size.
+#
+# Dataset cannot know your future live balance per trade, so SIM_BALANCE is the
+# fixed balance assumption used while labeling historical rows. Set this close
+# to the balance you expect to trade with.
+USE_LIVE_STYLE_SL_FOR_LABELS = True
+SIM_BALANCE = 40
+SIM_LOT_SIZE = 0.01
+STOP_LOSS_ACCOUNT_FRACTION = 0.10
+
+# XAUUSD assumption: 1.00 price move at 1.00 lot is about $100.
+# Therefore at 0.01 lot, 1.00 price move is about $1.
+# If your broker contract is different, adjust this value.
+USD_PER_PRICE_MOVE_PER_1_LOT = 100.0
+
+# Optional safety clamp for dataset labels. Live MT5 may also reject orders that
+# violate broker stop-level rules, but this keeps labels from becoming absurd.
+USE_LIVE_STYLE_SL_CLAMP = True
 
 # Label settings
 FUTURE_SHIFT = 30
@@ -49,6 +74,23 @@ FVG_NO_ZONE_AGE = 9999
 STRUCTURE_FRACTAL_LENGTH = 5
 STRUCTURE_RECENT_WINDOW = 5
 STRUCTURE_NO_BREAK_AGE = 9999
+
+
+# Liquidity Sweep / Rejection settings
+# These detect fake breakouts around recent highs/lows using only historical candles.
+SWEEP_LOOKBACK = 20
+SWEEP_REJECTION_BODY_CLOSE = True
+SWEEP_RECENT_WINDOW = 5
+SWEEP_NO_SWEEP_AGE = 9999
+SWEEP_STRONG_WICK_RATIO = 0.45
+SWEEP_STRONG_CLOSE_BEYOND_MIDPOINT = True
+
+# ========== HTF LIQUIDITY LEVEL SETTINGS ==========
+HTF_LIQUIDITY_NEAR_ATR_MULTIPLIER = 0.35
+HTF_LIQUIDITY_NEAR_PCT_FALLBACK = 0.0015
+HTF_LIQUIDITY_RECENT_WINDOW = 10
+HTF_LIQUIDITY_NO_SWEEP_AGE = 9999
+
 
 
 # ========== STEP 1: AUTO-DETECT FILES ==========
@@ -279,6 +321,352 @@ def create_features(
     return df
 
 
+
+
+
+# ========== LIQUIDITY SWEEP / REJECTION FEATURES ==========
+def add_liquidity_sweep_features(
+    df: pd.DataFrame,
+    prefix: str,
+    lookback: int = SWEEP_LOOKBACK,
+    recent_window: int = SWEEP_RECENT_WINDOW,
+) -> pd.DataFrame:
+    """
+    Adds liquidity sweep, rejection, strength, wick-quality, and ATR-normalized features.
+
+    No future leakage:
+      - prev_high/prev_low use shift(1) before rolling.
+      - current candle is only compared against already completed candles.
+
+    Core idea:
+      - sweep_high / sweep_low = price took recent high/low liquidity.
+      - sweep_reject_high / sweep_reject_low = price took liquidity then closed back inside.
+      - *_strength = how far price swept beyond the level.
+      - *_atr_strength = sweep size normalized by volatility.
+      - *_wick_rejection_strength = how much of the candle rejected from the swept level.
+    """
+    out = df.copy()
+
+    prev_high = out["high"].shift(1).rolling(lookback, min_periods=lookback).max()
+    prev_low = out["low"].shift(1).rolling(lookback, min_periods=lookback).min()
+
+    out[f"{prefix}_prev_high_{lookback}"] = prev_high
+    out[f"{prefix}_prev_low_{lookback}"] = prev_low
+
+    out[f"{prefix}_sweep_high"] = (out["high"] > prev_high).astype(int)
+    out[f"{prefix}_sweep_low"] = (out["low"] < prev_low).astype(int)
+
+    if SWEEP_REJECTION_BODY_CLOSE:
+        out[f"{prefix}_sweep_reject_high"] = (
+            (out[f"{prefix}_sweep_high"] == 1) &
+            (out["close"] < prev_high)
+        ).astype(int)
+        out[f"{prefix}_sweep_reject_low"] = (
+            (out[f"{prefix}_sweep_low"] == 1) &
+            (out["close"] > prev_low)
+        ).astype(int)
+    else:
+        out[f"{prefix}_sweep_reject_high"] = (
+            (out[f"{prefix}_sweep_high"] == 1) &
+            (out[["open", "close"]].max(axis=1) < prev_high)
+        ).astype(int)
+        out[f"{prefix}_sweep_reject_low"] = (
+            (out[f"{prefix}_sweep_low"] == 1) &
+            (out[["open", "close"]].min(axis=1) > prev_low)
+        ).astype(int)
+
+    # ----- Sweep depth / strength -----
+    raw_high_depth = (out["high"] - prev_high).clip(lower=0)
+    raw_low_depth = (prev_low - out["low"]).clip(lower=0)
+
+    out[f"{prefix}_sweep_high_depth"] = np.where(out[f"{prefix}_sweep_high"] == 1, raw_high_depth, 0.0)
+    out[f"{prefix}_sweep_low_depth"] = np.where(out[f"{prefix}_sweep_low"] == 1, raw_low_depth, 0.0)
+
+    out[f"{prefix}_sweep_high_strength"] = out[f"{prefix}_sweep_high_depth"] / (out["close"] + EPS)
+    out[f"{prefix}_sweep_low_strength"] = out[f"{prefix}_sweep_low_depth"] / (out["close"] + EPS)
+
+    atr_col = f"{prefix}_atr14"
+    if atr_col in out.columns:
+        atr_safe = out[atr_col].replace(0, np.nan)
+    else:
+        atr_safe = out[f"{prefix}_range"].rolling(lookback, min_periods=max(3, lookback // 2)).mean().replace(0, np.nan)
+
+    out[f"{prefix}_sweep_high_atr_strength"] = out[f"{prefix}_sweep_high_depth"] / (atr_safe + EPS)
+    out[f"{prefix}_sweep_low_atr_strength"] = out[f"{prefix}_sweep_low_depth"] / (atr_safe + EPS)
+
+    # ----- Wick rejection quality -----
+    range_safe = out[f"{prefix}_range"].replace(0, np.nan) if f"{prefix}_range" in out.columns else (out["high"] - out["low"]).replace(0, np.nan)
+    upper_wick_ratio = out.get(f"{prefix}_upper_wick_ratio", (out["high"] - out[["open", "close"]].max(axis=1)) / (range_safe + EPS))
+    lower_wick_ratio = out.get(f"{prefix}_lower_wick_ratio", (out[["open", "close"]].min(axis=1) - out["low"]) / (range_safe + EPS))
+    close_pos = out.get(f"{prefix}_close_pos_in_range", (out["close"] - out["low"]) / (range_safe + EPS))
+
+    out[f"{prefix}_sweep_high_wick_ratio"] = np.where(out[f"{prefix}_sweep_high"] == 1, upper_wick_ratio, 0.0)
+    out[f"{prefix}_sweep_low_wick_ratio"] = np.where(out[f"{prefix}_sweep_low"] == 1, lower_wick_ratio, 0.0)
+
+    # How much price rejected back from the swept extreme into the old range.
+    out[f"{prefix}_sweep_high_rejection_depth"] = np.where(
+        out[f"{prefix}_sweep_reject_high"] == 1,
+        (out["high"] - out["close"]).clip(lower=0),
+        0.0
+    )
+    out[f"{prefix}_sweep_low_rejection_depth"] = np.where(
+        out[f"{prefix}_sweep_reject_low"] == 1,
+        (out["close"] - out["low"]).clip(lower=0),
+        0.0
+    )
+
+    out[f"{prefix}_sweep_high_rejection_atr_strength"] = out[f"{prefix}_sweep_high_rejection_depth"] / (atr_safe + EPS)
+    out[f"{prefix}_sweep_low_rejection_atr_strength"] = out[f"{prefix}_sweep_low_rejection_depth"] / (atr_safe + EPS)
+
+    out[f"{prefix}_sweep_high_wick_rejection_strength"] = (
+        out[f"{prefix}_sweep_reject_high"] * upper_wick_ratio * out[f"{prefix}_sweep_high_atr_strength"]
+    )
+    out[f"{prefix}_sweep_low_wick_rejection_strength"] = (
+        out[f"{prefix}_sweep_reject_low"] * lower_wick_ratio * out[f"{prefix}_sweep_low_atr_strength"]
+    )
+
+    strong_high_extra = close_pos < 0.5 if SWEEP_STRONG_CLOSE_BEYOND_MIDPOINT else True
+    strong_low_extra = close_pos > 0.5 if SWEEP_STRONG_CLOSE_BEYOND_MIDPOINT else True
+
+    out[f"{prefix}_strong_sweep_reject_high"] = (
+        (out[f"{prefix}_sweep_reject_high"] == 1) &
+        (upper_wick_ratio >= SWEEP_STRONG_WICK_RATIO) &
+        strong_high_extra
+    ).astype(int)
+
+    out[f"{prefix}_strong_sweep_reject_low"] = (
+        (out[f"{prefix}_sweep_reject_low"] == 1) &
+        (lower_wick_ratio >= SWEEP_STRONG_WICK_RATIO) &
+        strong_low_extra
+    ).astype(int)
+
+    out[f"{prefix}_dist_to_prev_high_{lookback}"] = (prev_high - out["close"]) / (out["close"] + EPS)
+    out[f"{prefix}_dist_to_prev_low_{lookback}"] = (out["close"] - prev_low) / (out["close"] + EPS)
+
+    # ----- Recent/age features -----
+    def bars_since(signal: pd.Series) -> pd.Series:
+        last_idx = pd.Series(
+            np.where(signal.astype(bool), np.arange(len(out)), np.nan),
+            index=out.index
+        ).ffill()
+        bar_index = pd.Series(np.arange(len(out)), index=out.index)
+        return (bar_index - last_idx).fillna(SWEEP_NO_SWEEP_AGE)
+
+    out[f"{prefix}_bars_since_sweep_high"] = bars_since(out[f"{prefix}_sweep_high"])
+    out[f"{prefix}_bars_since_sweep_low"] = bars_since(out[f"{prefix}_sweep_low"])
+    out[f"{prefix}_bars_since_sweep_reject_high"] = bars_since(out[f"{prefix}_sweep_reject_high"])
+    out[f"{prefix}_bars_since_sweep_reject_low"] = bars_since(out[f"{prefix}_sweep_reject_low"])
+    out[f"{prefix}_bars_since_strong_sweep_reject_high"] = bars_since(out[f"{prefix}_strong_sweep_reject_high"])
+    out[f"{prefix}_bars_since_strong_sweep_reject_low"] = bars_since(out[f"{prefix}_strong_sweep_reject_low"])
+
+    out[f"{prefix}_recent_sweep_high"] = (out[f"{prefix}_bars_since_sweep_high"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_sweep_low"] = (out[f"{prefix}_bars_since_sweep_low"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_sweep_reject_high"] = (out[f"{prefix}_bars_since_sweep_reject_high"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_sweep_reject_low"] = (out[f"{prefix}_bars_since_sweep_reject_low"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_strong_sweep_reject_high"] = (out[f"{prefix}_bars_since_strong_sweep_reject_high"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_strong_sweep_reject_low"] = (out[f"{prefix}_bars_since_strong_sweep_reject_low"] <= recent_window).astype(int)
+
+    out[f"{prefix}_sweep_reversal_bias"] = (
+        out[f"{prefix}_recent_sweep_reject_low"] - out[f"{prefix}_recent_sweep_reject_high"]
+    )
+    out[f"{prefix}_strong_sweep_reversal_bias"] = (
+        out[f"{prefix}_recent_strong_sweep_reject_low"] - out[f"{prefix}_recent_strong_sweep_reject_high"]
+    )
+    out[f"{prefix}_sweep_continuation_bias"] = (
+        out[f"{prefix}_recent_sweep_high"] - out[f"{prefix}_recent_sweep_low"]
+    )
+
+    return out
+
+
+def add_htf_liquidity_level_features(df: pd.DataFrame, raw_1m: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds previous Daily / Weekly / Monthly high-low liquidity features.
+
+    No future leakage:
+      - Daily/weekly/monthly levels are built from completed periods only.
+      - The current day uses the previous day's high/low.
+      - The current week uses the previous week's high/low.
+      - The current month uses the previous month's high/low.
+
+    Main feature groups:
+      - raw previous levels: prev_daily_high, prev_weekly_low, etc.
+      - distance to each level
+      - near level flags
+      - swept / rejected / reclaimed level flags
+      - bars since sweep
+      - previous range position and premium/discount context
+      - combined HTF liquidity bias scores
+    """
+    out = df.copy()
+    raw = raw_1m.reindex(out.index).copy()
+
+    if not isinstance(raw.index, pd.DatetimeIndex):
+        raise ValueError("raw_1m must have a DatetimeIndex before adding HTF liquidity features.")
+
+    high = raw["high"]
+    low = raw["low"]
+    close = raw["close"]
+
+    # ATR-based near-threshold if available; percent fallback if ATR is missing.
+    if "1m_atr14" in out.columns:
+        near_distance = (out["1m_atr14"].abs() * HTF_LIQUIDITY_NEAR_ATR_MULTIPLIER).fillna(close * HTF_LIQUIDITY_NEAR_PCT_FALLBACK)
+    else:
+        near_distance = close * HTF_LIQUIDITY_NEAR_PCT_FALLBACK
+
+    def previous_period_levels(period_code: str) -> tuple[pd.Series, pd.Series]:
+        period = raw.index.to_period(period_code)
+        period_frame = pd.DataFrame({"period": period, "high": high, "low": low}, index=raw.index)
+        levels = period_frame.groupby("period").agg(period_high=("high", "max"), period_low=("low", "min"))
+        prev_high_by_period = levels["period_high"].shift(1)
+        prev_low_by_period = levels["period_low"].shift(1)
+        prev_high = pd.Series(period.map(prev_high_by_period), index=raw.index, dtype="float64")
+        prev_low = pd.Series(period.map(prev_low_by_period), index=raw.index, dtype="float64")
+        return prev_high, prev_low
+
+    def bars_since(signal: pd.Series) -> pd.Series:
+        last_idx = pd.Series(np.where(signal.astype(bool), np.arange(len(out)), np.nan), index=out.index).ffill()
+        bar_idx = pd.Series(np.arange(len(out)), index=out.index)
+        return (bar_idx - last_idx).fillna(HTF_LIQUIDITY_NO_SWEEP_AGE)
+
+    level_specs = [
+        ("daily", "D"),
+        ("weekly", "W"),
+        ("monthly", "M"),
+    ]
+
+    for name, period_code in level_specs:
+        prev_high, prev_low = previous_period_levels(period_code)
+        prev_mid = (prev_high + prev_low) / 2.0
+        prev_range = (prev_high - prev_low).replace(0, np.nan)
+
+        out[f"prev_{name}_high"] = prev_high
+        out[f"prev_{name}_low"] = prev_low
+        out[f"prev_{name}_mid"] = prev_mid
+        out[f"prev_{name}_range"] = prev_range
+
+        out[f"dist_to_prev_{name}_high"] = (prev_high - close) / (close + EPS)
+        out[f"dist_to_prev_{name}_low"] = (close - prev_low) / (close + EPS)
+        out[f"abs_dist_to_prev_{name}_high"] = (prev_high - close).abs() / (close + EPS)
+        out[f"abs_dist_to_prev_{name}_low"] = (close - prev_low).abs() / (close + EPS)
+
+        out[f"near_prev_{name}_high"] = ((prev_high - close).abs() <= near_distance).astype(int)
+        out[f"near_prev_{name}_low"] = ((close - prev_low).abs() <= near_distance).astype(int)
+
+        out[f"closed_above_prev_{name}_high"] = (close > prev_high).astype(int)
+        out[f"closed_below_prev_{name}_low"] = (close < prev_low).astype(int)
+        out[f"inside_prev_{name}_range"] = ((close <= prev_high) & (close >= prev_low)).astype(int)
+
+        out[f"swept_prev_{name}_high"] = (high > prev_high).astype(int)
+        out[f"swept_prev_{name}_low"] = (low < prev_low).astype(int)
+
+        # Rejection = takes liquidity, then closes back inside the previous range.
+        out[f"reject_prev_{name}_high"] = ((out[f"swept_prev_{name}_high"] == 1) & (close < prev_high)).astype(int)
+        out[f"reject_prev_{name}_low"] = ((out[f"swept_prev_{name}_low"] == 1) & (close > prev_low)).astype(int)
+
+        # Reclaim / breakout confirmation = closes beyond the swept level.
+        out[f"reclaim_prev_{name}_high"] = ((out[f"swept_prev_{name}_high"] == 1) & (close > prev_high)).astype(int)
+        out[f"reclaim_prev_{name}_low"] = ((out[f"swept_prev_{name}_low"] == 1) & (close < prev_low)).astype(int)
+
+        out[f"prev_{name}_range_position"] = ((close - prev_low) / (prev_range + EPS)).clip(lower=-1, upper=2)
+        out[f"above_prev_{name}_mid"] = (close > prev_mid).astype(int)
+        out[f"below_prev_{name}_mid"] = (close < prev_mid).astype(int)
+        out[f"prev_{name}_premium_discount"] = np.where(close > prev_mid, 1, np.where(close < prev_mid, -1, 0))
+
+        out[f"prev_{name}_high_sweep_depth"] = np.where(out[f"swept_prev_{name}_high"] == 1, (high - prev_high).clip(lower=0), 0.0)
+        out[f"prev_{name}_low_sweep_depth"] = np.where(out[f"swept_prev_{name}_low"] == 1, (prev_low - low).clip(lower=0), 0.0)
+        out[f"prev_{name}_high_sweep_depth_pct"] = out[f"prev_{name}_high_sweep_depth"] / (close + EPS)
+        out[f"prev_{name}_low_sweep_depth_pct"] = out[f"prev_{name}_low_sweep_depth"] / (close + EPS)
+
+        out[f"bars_since_swept_prev_{name}_high"] = bars_since(out[f"swept_prev_{name}_high"])
+        out[f"bars_since_swept_prev_{name}_low"] = bars_since(out[f"swept_prev_{name}_low"])
+        out[f"bars_since_reject_prev_{name}_high"] = bars_since(out[f"reject_prev_{name}_high"])
+        out[f"bars_since_reject_prev_{name}_low"] = bars_since(out[f"reject_prev_{name}_low"])
+
+        out[f"recent_swept_prev_{name}_high"] = (out[f"bars_since_swept_prev_{name}_high"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_swept_prev_{name}_low"] = (out[f"bars_since_swept_prev_{name}_low"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_reject_prev_{name}_high"] = (out[f"bars_since_reject_prev_{name}_high"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_reject_prev_{name}_low"] = (out[f"bars_since_reject_prev_{name}_low"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+
+    # Combined liquidity context scores.
+    out["htf_liquidity_near_high_score"] = out[["near_prev_daily_high", "near_prev_weekly_high", "near_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_near_low_score"] = out[["near_prev_daily_low", "near_prev_weekly_low", "near_prev_monthly_low"]].sum(axis=1)
+
+    out["htf_liquidity_sweep_high_score"] = out[["recent_swept_prev_daily_high", "recent_swept_prev_weekly_high", "recent_swept_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_sweep_low_score"] = out[["recent_swept_prev_daily_low", "recent_swept_prev_weekly_low", "recent_swept_prev_monthly_low"]].sum(axis=1)
+
+    out["htf_liquidity_reject_high_score"] = out[["recent_reject_prev_daily_high", "recent_reject_prev_weekly_high", "recent_reject_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_reject_low_score"] = out[["recent_reject_prev_daily_low", "recent_reject_prev_weekly_low", "recent_reject_prev_monthly_low"]].sum(axis=1)
+
+    # Positive = bullish liquidity reaction; negative = bearish liquidity reaction.
+    out["htf_liquidity_reversal_bias"] = out["htf_liquidity_reject_low_score"] - out["htf_liquidity_reject_high_score"]
+    out["htf_liquidity_continuation_bias"] = out["htf_liquidity_sweep_high_score"] - out["htf_liquidity_sweep_low_score"]
+
+    out["daily_weekly_liquidity_confluence_high"] = ((out["near_prev_daily_high"] == 1) & (out["near_prev_weekly_high"] == 1)).astype(int)
+    out["daily_weekly_liquidity_confluence_low"] = ((out["near_prev_daily_low"] == 1) & (out["near_prev_weekly_low"] == 1)).astype(int)
+
+    return out
+
+# ========== MUST-ADD CONTEXT FEATURES: TIME + DAILY POSITION + VOLATILITY REGIME ==========
+def add_must_have_context_features(df: pd.DataFrame, raw_1m: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds the first context upgrade only, without changing/removing existing features.
+
+    Features added:
+      - cyclical time: hour_sin/hour_cos, dow_sin/dow_cos
+      - session flags: Asia, London, NY, London open, NY open
+      - daily range context: daily_position and distance to rolling daily high/low
+      - volatility regime context: ATR rolling mean and ATR z-score
+
+    Notes:
+      - Uses the existing datetime index from MT5 data.
+      - Rolling daily high/low uses 1440 one-minute candles, so it stays historical only.
+      - ATR z-score uses existing 1m_atr_pct14, which is already calculated before this function runs.
+    """
+    out = df.copy()
+
+    # ----- Time cycle features -----
+    out["hour"] = out.index.hour
+    out["day_of_week"] = out.index.dayofweek
+
+    out["hour_sin"] = np.sin(2 * np.pi * out["hour"] / 24)
+    out["hour_cos"] = np.cos(2 * np.pi * out["hour"] / 24)
+    out["dow_sin"] = np.sin(2 * np.pi * out["day_of_week"] / 7)
+    out["dow_cos"] = np.cos(2 * np.pi * out["day_of_week"] / 7)
+
+    # ----- Session / activity-window flags -----
+    # These use the timestamp as provided by your MT5 CSV/server time.
+    out["session_asia"] = ((out["hour"] >= 0) & (out["hour"] < 8)).astype(int)
+    out["session_london"] = ((out["hour"] >= 8) & (out["hour"] < 16)).astype(int)
+    out["session_ny"] = ((out["hour"] >= 13) & (out["hour"] < 21)).astype(int)
+    out["london_open"] = ((out["hour"] >= 7) & (out["hour"] <= 10)).astype(int)
+    out["ny_open"] = ((out["hour"] >= 13) & (out["hour"] <= 16)).astype(int)
+
+    # ----- Daily price-location context -----
+    raw_aligned = raw_1m.reindex(out.index)
+    daily_high = raw_aligned["high"].rolling(1440, min_periods=60).max()
+    daily_low = raw_aligned["low"].rolling(1440, min_periods=60).min()
+    daily_range = daily_high - daily_low
+
+    out["daily_high"] = daily_high
+    out["daily_low"] = daily_low
+    out["daily_range"] = daily_range
+    out["daily_position"] = (raw_aligned["close"] - daily_low) / (daily_range + EPS)
+    out["dist_to_daily_high"] = (daily_high - raw_aligned["close"]) / (raw_aligned["close"] + EPS)
+    out["dist_to_daily_low"] = (raw_aligned["close"] - daily_low) / (raw_aligned["close"] + EPS)
+
+    # Keep daily_position clean even during startup rows or flat-range moments.
+    out["daily_position"] = out["daily_position"].clip(lower=0, upper=1)
+
+    # ----- Volatility regime context -----
+    if "1m_atr_pct14" not in out.columns:
+        raise ValueError("1m_atr_pct14 is required before adding volatility context features.")
+
+    out["atr_mean_100"] = out["1m_atr_pct14"].rolling(100, min_periods=20).mean()
+    out["atr_std_100"] = out["1m_atr_pct14"].rolling(100, min_periods=20).std()
+    out["volatility_zscore"] = (out["1m_atr_pct14"] - out["atr_mean_100"]) / (out["atr_std_100"] + EPS)
+
+    return out
 
 # ========== FRACTAL BOS / CHoCH MARKET STRUCTURE FEATURES ==========
 def add_fractal_structure_features(
@@ -945,7 +1333,14 @@ def add_entry_style_labels(df: pd.DataFrame, raw_1m: pd.DataFrame) -> pd.DataFra
     high = raw["high"].to_numpy(float)
     low = raw["low"].to_numpy(float)
     spread_ret = out["spread_return"].to_numpy(float)
-    sl_dist = out["dynamic_sl_price_distance"].to_numpy(float)
+
+    if USE_LIVE_STYLE_SL_FOR_LABELS and "live_style_sl_price_distance" in out.columns:
+        sl_dist = out["live_style_sl_price_distance"].to_numpy(float)
+        tp_dist = out["live_style_tp_price_distance"].to_numpy(float)
+    else:
+        sl_dist = out["dynamic_sl_price_distance"].to_numpy(float)
+        tp_dist = out["dynamic_tp_price_distance"].to_numpy(float)
+
     n = len(out)
 
     candidate_cols = {
@@ -959,10 +1354,17 @@ def add_entry_style_labels(df: pd.DataFrame, raw_1m: pd.DataFrame) -> pd.DataFra
     best_return = np.zeros(n, dtype=float)
 
     def trade_result(i, direction, entry_price, start_j):
-        if start_j is None or not np.isfinite(entry_price) or not np.isfinite(sl_dist[i]) or sl_dist[i] <= 0:
+        if (
+            start_j is None
+            or not np.isfinite(entry_price)
+            or not np.isfinite(sl_dist[i])
+            or not np.isfinite(tp_dist[i])
+            or sl_dist[i] <= 0
+            or tp_dist[i] <= 0
+        ):
             return np.nan
         sl = sl_dist[i]
-        tp = sl * RISK_REWARD_RATIO
+        tp = tp_dist[i]
         end_j = min(n - 1, i + ENTRY_EVAL_BARS)
         if start_j > end_j:
             return np.nan
@@ -1045,21 +1447,22 @@ def add_entry_style_labels(df: pd.DataFrame, raw_1m: pd.DataFrame) -> pd.DataFra
     return out
 
 
-# ========== STEP 5: DYNAMIC SL/TP PLANNER ==========
+# ========== STEP 5: SL/TP PLANNER ==========
 def add_dynamic_sl_tp_plan(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keeps the old ATR-based SL/TP columns for comparison/debugging, then adds
+    live-style SL/TP columns used by the entry-style labeler.
+
+    The live-style columns approximate the live bot's MT5 order_calc_profit()
+    behavior without needing an MT5 connection during dataset building.
+    """
     df = df.copy()
 
-    # Base SL from 1m ATR
-    base_sl_price_distance = df["1m_atr14"] * BASE_ATR_SL_MULTIPLIER
-
-    # If market is choppy, widen SL a bit
-    # If trend is confirmed, keep SL closer
+    # ----- Old ATR-based SL/TP plan kept for comparison -----
     df["sl_atr_multiplier"] = BASE_ATR_SL_MULTIPLIER
 
     df.loc[df["market_is_choppy"] == 1, "sl_atr_multiplier"] += 0.3
     df.loc[df["entry_trend_confirmed"] == 1, "sl_atr_multiplier"] -= 0.2
-
-    # If current 1m range is unusually large, widen SL
     df.loc[df["1m_range_vs_atr14"] > 1.5, "sl_atr_multiplier"] += 0.2
 
     df["sl_atr_multiplier"] = df["sl_atr_multiplier"].clip(
@@ -1068,25 +1471,63 @@ def add_dynamic_sl_tp_plan(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     df["dynamic_sl_price_distance"] = df["1m_atr14"] * df["sl_atr_multiplier"]
-
-    # Convert to points and clamp
     df["dynamic_sl_points"] = df["dynamic_sl_price_distance"] / POINT_VALUE
     df["dynamic_sl_points"] = df["dynamic_sl_points"].clip(
         lower=MIN_SL_POINTS,
         upper=MAX_SL_POINTS
     )
-
-    # Recalculate price distance after clipping
     df["dynamic_sl_price_distance"] = df["dynamic_sl_points"] * POINT_VALUE
 
-    # TP is always 2x SL
     df["risk_reward_ratio"] = RISK_REWARD_RATIO
     df["dynamic_tp_price_distance"] = df["dynamic_sl_price_distance"] * RISK_REWARD_RATIO
     df["dynamic_tp_points"] = df["dynamic_sl_points"] * RISK_REWARD_RATIO
 
-    # Useful extra columns for future sim/live checks
     df["sl_distance_pct"] = df["dynamic_sl_price_distance"] / (df["1m_ma20"] + EPS)
     df["tp_distance_pct"] = df["dynamic_tp_price_distance"] / (df["1m_ma20"] + EPS)
+
+    # ----- New live-style SL/TP plan used by labels -----
+    live_risk_usd = SIM_BALANCE * STOP_LOSS_ACCOUNT_FRACTION
+    live_reward_usd = live_risk_usd * RISK_REWARD_RATIO
+
+    usd_per_price_move = SIM_LOT_SIZE * USD_PER_PRICE_MOVE_PER_1_LOT
+    if usd_per_price_move <= 0:
+        raise ValueError("Invalid live-style profit conversion settings.")
+
+    live_sl_price_distance = live_risk_usd / usd_per_price_move
+    live_tp_price_distance = live_reward_usd / usd_per_price_move
+
+    df["live_style_risk_usd"] = live_risk_usd
+    df["live_style_reward_usd"] = live_reward_usd
+    df["live_style_lot_size"] = SIM_LOT_SIZE
+    df["live_style_sim_balance"] = SIM_BALANCE
+    df["live_style_usd_per_price_move"] = usd_per_price_move
+
+    df["live_style_sl_price_distance"] = live_sl_price_distance
+    df["live_style_tp_price_distance"] = live_tp_price_distance
+    df["live_style_sl_points"] = df["live_style_sl_price_distance"] / POINT_VALUE
+    df["live_style_tp_points"] = df["live_style_tp_price_distance"] / POINT_VALUE
+
+    if USE_LIVE_STYLE_SL_CLAMP:
+        df["live_style_sl_points"] = df["live_style_sl_points"].clip(
+            lower=MIN_SL_POINTS,
+            upper=MAX_SL_POINTS
+        )
+        df["live_style_sl_price_distance"] = df["live_style_sl_points"] * POINT_VALUE
+        df["live_style_tp_price_distance"] = df["live_style_sl_price_distance"] * RISK_REWARD_RATIO
+        df["live_style_tp_points"] = df["live_style_sl_points"] * RISK_REWARD_RATIO
+
+    df["label_sl_price_distance"] = np.where(
+        USE_LIVE_STYLE_SL_FOR_LABELS,
+        df["live_style_sl_price_distance"],
+        df["dynamic_sl_price_distance"]
+    )
+    df["label_tp_price_distance"] = np.where(
+        USE_LIVE_STYLE_SL_FOR_LABELS,
+        df["live_style_tp_price_distance"],
+        df["dynamic_tp_price_distance"]
+    )
+    df["label_sl_points"] = df["label_sl_price_distance"] / POINT_VALUE
+    df["label_tp_points"] = df["label_tp_price_distance"] / POINT_VALUE
 
     return df
 
@@ -1110,9 +1551,9 @@ print(f"5m : {df_5m_raw.index.min()} -> {df_5m_raw.index.max()} | rows={len(df_5
 print(f"15m: {df_15m_raw.index.min()} -> {df_15m_raw.index.max()} | rows={len(df_15m_raw)}")
 
 print("\n[FEATURES] Calculating indicators on each ORIGINAL timeframe first")
-print("[FEATURES] 1m: candle features + RSI + ATR + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG")
-print("[FEATURES] 5m: candle features + RSI + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG")
-print("[FEATURES] 15m: candle features + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG")
+print("[FEATURES] 1m: candle features + RSI + ATR + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG + Sweeps/Rejections")
+print("[FEATURES] 5m: candle features + RSI + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG + Sweeps/Rejections")
+print("[FEATURES] 15m: candle features + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG + Sweeps/Rejections")
 
 # IMPORTANT:
 # Do NOT reindex 5m/15m raw candles to the 1m index before calculating indicators.
@@ -1120,6 +1561,11 @@ print("[FEATURES] 15m: candle features + ADX + Fractal BOS/CHoCH + OB/Breaker Bl
 df_1m_features = create_features(df_1m_raw, "1m", use_rsi=True, use_atr=True, use_adx=True)
 df_5m_features = create_features(df_5m_raw, "5m", use_rsi=True, use_atr=False, use_adx=True)
 df_15m_features = create_features(df_15m_raw, "15m", use_rsi=False, use_atr=False, use_adx=True)
+
+print("[FEATURES] Adding liquidity sweep / rejection features")
+df_1m_features = add_liquidity_sweep_features(df_1m_features, "1m")
+df_5m_features = add_liquidity_sweep_features(df_5m_features, "5m")
+df_15m_features = add_liquidity_sweep_features(df_15m_features, "15m")
 
 print("[FEATURES] Adding Pine/LuxAlgo-style fractal BOS/CHoCH market structure features")
 df_1m_features = add_fractal_structure_features(df_1m_features, "1m")
@@ -1305,6 +1751,107 @@ df["structure_recent_break_score"] = (
 )
 
 
+
+# ========== LIQUIDITY SWEEP / REJECTION ALIGNMENT FEATURES ==========
+df["sweep_high_context_score"] = (
+    df["1m_recent_sweep_high"] +
+    df["5m_recent_sweep_high"] +
+    df["15m_recent_sweep_high"]
+)
+
+df["sweep_low_context_score"] = (
+    df["1m_recent_sweep_low"] +
+    df["5m_recent_sweep_low"] +
+    df["15m_recent_sweep_low"]
+)
+
+df["sweep_reject_high_context_score"] = (
+    df["1m_recent_sweep_reject_high"] +
+    df["5m_recent_sweep_reject_high"] +
+    df["15m_recent_sweep_reject_high"]
+)
+
+df["sweep_reject_low_context_score"] = (
+    df["1m_recent_sweep_reject_low"] +
+    df["5m_recent_sweep_reject_low"] +
+    df["15m_recent_sweep_reject_low"]
+)
+
+df["strong_sweep_reject_high_context_score"] = (
+    df["1m_recent_strong_sweep_reject_high"] +
+    df["5m_recent_strong_sweep_reject_high"] +
+    df["15m_recent_strong_sweep_reject_high"]
+)
+
+df["strong_sweep_reject_low_context_score"] = (
+    df["1m_recent_strong_sweep_reject_low"] +
+    df["5m_recent_strong_sweep_reject_low"] +
+    df["15m_recent_strong_sweep_reject_low"]
+)
+
+df["sweep_reversal_context_score"] = (
+    df["1m_sweep_reversal_bias"] +
+    df["5m_sweep_reversal_bias"] +
+    df["15m_sweep_reversal_bias"]
+)
+
+df["strong_sweep_reversal_context_score"] = (
+    df["1m_strong_sweep_reversal_bias"] +
+    df["5m_strong_sweep_reversal_bias"] +
+    df["15m_strong_sweep_reversal_bias"]
+)
+
+df["sweep_continuation_context_score"] = (
+    df["1m_sweep_continuation_bias"] +
+    df["5m_sweep_continuation_bias"] +
+    df["15m_sweep_continuation_bias"]
+)
+
+df["sweep_high_atr_strength_sum"] = (
+    df["1m_sweep_high_atr_strength"] +
+    df["5m_sweep_high_atr_strength"] +
+    df["15m_sweep_high_atr_strength"]
+)
+
+df["sweep_low_atr_strength_sum"] = (
+    df["1m_sweep_low_atr_strength"] +
+    df["5m_sweep_low_atr_strength"] +
+    df["15m_sweep_low_atr_strength"]
+)
+
+df["sweep_high_wick_rejection_strength_sum"] = (
+    df["1m_sweep_high_wick_rejection_strength"] +
+    df["5m_sweep_high_wick_rejection_strength"] +
+    df["15m_sweep_high_wick_rejection_strength"]
+)
+
+df["sweep_low_wick_rejection_strength_sum"] = (
+    df["1m_sweep_low_wick_rejection_strength"] +
+    df["5m_sweep_low_wick_rejection_strength"] +
+    df["15m_sweep_low_wick_rejection_strength"]
+)
+
+df["htf_sweep_high_ltf_reject"] = (
+    ((df["15m_recent_sweep_high"] == 1) | (df["5m_recent_sweep_high"] == 1)) &
+    (df["1m_recent_sweep_reject_high"] == 1)
+).astype(int)
+
+df["htf_sweep_low_ltf_reject"] = (
+    ((df["15m_recent_sweep_low"] == 1) | (df["5m_recent_sweep_low"] == 1)) &
+    (df["1m_recent_sweep_reject_low"] == 1)
+).astype(int)
+
+df["htf_sweep_high_ltf_strong_reject"] = (
+    ((df["15m_recent_sweep_high"] == 1) | (df["5m_recent_sweep_high"] == 1)) &
+    (df["1m_recent_strong_sweep_reject_high"] == 1)
+).astype(int)
+
+df["htf_sweep_low_ltf_strong_reject"] = (
+    ((df["15m_recent_sweep_low"] == 1) | (df["5m_recent_sweep_low"] == 1)) &
+    (df["1m_recent_strong_sweep_reject_low"] == 1)
+).astype(int)
+
+
 # ========== ORDER BLOCK / BREAKER BLOCK ALIGNMENT FEATURES ==========
 df["htf_ltf_bull_ob_alignment"] = (
     (df["15m_inside_bull_ob"] == 1) &
@@ -1462,6 +2009,16 @@ df["mixed_or_weak_trend"] = (
 ).astype(int)
 
 
+
+# ========== MUST-ADD CONTEXT FEATURES ==========
+print("[FEATURES] Adding must-have context features: cyclical time + sessions + daily position + volatility z-score")
+df = add_must_have_context_features(df, df_1m_raw)
+
+# ========== TRUE SESSION-BASED HTF LIQUIDITY FEATURES ==========
+# Keeps the existing rolling daily context above, then adds exact previous
+# daily/weekly/monthly high-low levels like the Pine Script D/W/M logic.
+print("[FEATURES] Adding true session-based previous daily/weekly/monthly liquidity levels")
+df = add_htf_liquidity_level_features(df, df_1m_raw)
 # ========== STEP 9: SPREAD INFO ==========
 df["spread_points"] = df_1m_raw["spread_points"]
 df["spread_price"] = df["spread_points"] * POINT_VALUE
@@ -1487,7 +2044,7 @@ def label_direction(x: float) -> int:
 
 df["old_direction_target"] = df["future_return"].apply(label_direction)
 
-print("[LABELS] Creating entry-style target: NOW vs WAIT_FVG vs WAIT_OB vs NO_TRADE")
+print(f"[LABELS] Creating entry-style target using {'LIVE-STYLE' if USE_LIVE_STYLE_SL_FOR_LABELS else 'ATR-DYNAMIC'} SL/TP: NOW vs WAIT_FVG vs WAIT_OB vs NO_TRADE")
 df = add_entry_style_labels(df, df_1m_raw)
 
 
@@ -1538,6 +2095,10 @@ critical_cols = [
     "spread_return",
     "dynamic_sl_price_distance",
     "dynamic_tp_price_distance",
+    "live_style_sl_price_distance",
+    "live_style_tp_price_distance",
+    "label_sl_price_distance",
+    "label_tp_price_distance",
     "target_entry_style",
     "target_direction",
     "target",
@@ -1620,7 +2181,52 @@ fvg_summary_cols = [
 ]
 print(df[fvg_summary_cols].sum().sort_values(ascending=False))
 
-print("\nDynamic SL/TP summary:")
+
+print("\nLiquidity Sweep / Rejection feature summary:")
+sweep_summary_cols = [
+    "1m_sweep_high", "1m_sweep_low", "1m_sweep_reject_high", "1m_sweep_reject_low",
+    "5m_sweep_high", "5m_sweep_low", "5m_sweep_reject_high", "5m_sweep_reject_low",
+    "15m_sweep_high", "15m_sweep_low", "15m_sweep_reject_high", "15m_sweep_reject_low",
+    "1m_recent_sweep_high", "1m_recent_sweep_low",
+    "1m_recent_sweep_reject_high", "1m_recent_sweep_reject_low",
+    "sweep_high_context_score", "sweep_low_context_score",
+    "sweep_reject_high_context_score", "sweep_reject_low_context_score",
+    "htf_sweep_high_ltf_reject", "htf_sweep_low_ltf_reject",
+    "1m_strong_sweep_reject_high", "1m_strong_sweep_reject_low",
+    "5m_strong_sweep_reject_high", "5m_strong_sweep_reject_low",
+    "15m_strong_sweep_reject_high", "15m_strong_sweep_reject_low",
+    "strong_sweep_reject_high_context_score", "strong_sweep_reject_low_context_score",
+    "sweep_high_atr_strength_sum", "sweep_low_atr_strength_sum",
+    "sweep_high_wick_rejection_strength_sum", "sweep_low_wick_rejection_strength_sum",
+    "htf_sweep_high_ltf_strong_reject", "htf_sweep_low_ltf_strong_reject"
+]
+sweep_summary_cols = [col for col in sweep_summary_cols if col in df.columns]
+print(df[sweep_summary_cols].sum().sort_values(ascending=False))
+
+print("\nTrue Session-Based HTF Liquidity feature summary:")
+htf_liquidity_summary_cols = [
+    "near_prev_daily_high", "near_prev_daily_low",
+    "near_prev_weekly_high", "near_prev_weekly_low",
+    "near_prev_monthly_high", "near_prev_monthly_low",
+    "swept_prev_daily_high", "swept_prev_daily_low",
+    "swept_prev_weekly_high", "swept_prev_weekly_low",
+    "swept_prev_monthly_high", "swept_prev_monthly_low",
+    "reject_prev_daily_high", "reject_prev_daily_low",
+    "reject_prev_weekly_high", "reject_prev_weekly_low",
+    "reject_prev_monthly_high", "reject_prev_monthly_low",
+    "reclaim_prev_daily_high", "reclaim_prev_daily_low",
+    "reclaim_prev_weekly_high", "reclaim_prev_weekly_low",
+    "reclaim_prev_monthly_high", "reclaim_prev_monthly_low",
+    "htf_liquidity_near_high_score", "htf_liquidity_near_low_score",
+    "htf_liquidity_sweep_high_score", "htf_liquidity_sweep_low_score",
+    "htf_liquidity_reject_high_score", "htf_liquidity_reject_low_score",
+    "htf_liquidity_reversal_bias", "htf_liquidity_continuation_bias",
+    "daily_weekly_liquidity_confluence_high", "daily_weekly_liquidity_confluence_low",
+]
+htf_liquidity_summary_cols = [col for col in htf_liquidity_summary_cols if col in df.columns]
+print(df[htf_liquidity_summary_cols].sum().sort_values(ascending=False))
+
+print("\nDynamic ATR SL/TP summary:")
 print(df[[
     "sl_atr_multiplier",
     "dynamic_sl_points",
@@ -1630,6 +2236,21 @@ print(df[[
     "sl_distance_pct",
     "tp_distance_pct"
 ]].describe())
+
+print("\nLive-style label SL/TP summary:")
+print(df[[
+    "live_style_sim_balance",
+    "live_style_lot_size",
+    "live_style_risk_usd",
+    "live_style_reward_usd",
+    "live_style_sl_points",
+    "live_style_tp_points",
+    "live_style_sl_price_distance",
+    "live_style_tp_price_distance",
+    "label_sl_points",
+    "label_tp_points"
+]].describe())
+print(f"\nLabels used live-style SL/TP: {USE_LIVE_STYLE_SL_FOR_LABELS}")
 
 print("\nSpread summary:")
 print(df[["spread_points", "spread_price", "spread_return"]].describe())

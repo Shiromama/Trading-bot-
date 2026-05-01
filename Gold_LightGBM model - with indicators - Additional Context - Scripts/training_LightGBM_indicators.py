@@ -54,6 +54,22 @@ MANUAL_EXCLUDE_COLS = [
     "risk_reward_ratio",
     "sl_distance_pct",
     "tp_distance_pct",
+
+    # Live-style SL/TP label planner columns from dataset_builder_live_style_sltp.py.
+    # These describe how labels were simulated, so they must not leak into X.
+    "live_style_risk_usd",
+    "live_style_reward_usd",
+    "live_style_lot_size",
+    "live_style_sim_balance",
+    "live_style_usd_per_price_move",
+    "live_style_sl_price_distance",
+    "live_style_tp_price_distance",
+    "live_style_sl_points",
+    "live_style_tp_points",
+    "label_sl_price_distance",
+    "label_tp_price_distance",
+    "label_sl_points",
+    "label_tp_points",
 ]
 
 # Extra safety net: if future dataset builders add similar result/label columns,
@@ -64,6 +80,8 @@ LEAKAGE_PATTERNS = [
     r"^future_",
     r"^entry_style",
     r"^ret_",
+    r"^live_style_",
+    r"^label_",
     r"_return$",              # catches target/result return columns; 1m_return etc handled below by allowlist exception
 ]
 
@@ -87,6 +105,20 @@ df.sort_index(inplace=True)
 
 print(f"Dataset date range: {df.index.min()} -> {df.index.max()}")
 print(f"Dataset raw shape: {df.shape}")
+
+live_style_cols_present = [
+    c for c in [
+        "live_style_sl_price_distance",
+        "live_style_tp_price_distance",
+        "label_sl_price_distance",
+        "label_tp_price_distance",
+    ]
+    if c in df.columns
+]
+if live_style_cols_present:
+    print("Live-style SL/TP columns detected:", live_style_cols_present)
+else:
+    print("WARNING: No live-style SL/TP columns detected. Run dataset_builder_live_style_sltp.py first if intended.")
 
 # ========== TARGET ==========
 if "target_entry_style" in df.columns:
@@ -234,6 +266,14 @@ def make_prob_df(X_part: pd.DataFrame, y_part: pd.Series, source_df: pd.DataFram
         "entry_style_return",
         "future_return",
         "spread_return",
+        "live_style_sl_price_distance",
+        "live_style_tp_price_distance",
+        "live_style_sl_points",
+        "live_style_tp_points",
+        "label_sl_price_distance",
+        "label_tp_price_distance",
+        "label_sl_points",
+        "label_tp_points",
     ]
     for col in eval_cols:
         if col in source_df.columns:
@@ -409,6 +449,10 @@ else:
         "ret_sell_now",
         "ret_sell_wait_fvg",
         "ret_sell_wait_ob",
+        "label_sl_points",
+        "label_tp_points",
+        "label_sl_price_distance",
+        "label_tp_price_distance",
     ]
     cols_to_show = [c for c in cols_to_show if c in filtered_test.columns]
     print(filtered_test[cols_to_show].sort_values("max_confidence", ascending=False).head(10))
@@ -451,6 +495,30 @@ structure_importance = feature_importance[
     )
 ]
 
+context_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "hour_|dow_|day_of_week|session_|london_open|ny_open|daily_|dist_to_daily|atr_mean_100|atr_std_100|volatility_zscore",
+        case=False,
+        regex=True
+    )
+]
+
+sweep_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "sweep|prev_high_20|prev_low_20|dist_to_prev_high|dist_to_prev_low|wick_rejection|atr_strength|strong_sweep",
+        case=False,
+        regex=True
+    )
+]
+
+htf_liquidity_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "htf_liquidity|prev_daily|prev_weekly|prev_monthly|near_prev|swept_prev|reject_prev|reclaim_prev|bars_since_swept_prev|bars_since_reject_prev|premium_discount|range_position|daily_weekly_liquidity_confluence",
+        case=False,
+        regex=True
+    )
+]
+
 print("\nTop Indicator / Regime Features:")
 print(indicator_importance.head(30))
 
@@ -460,8 +528,17 @@ print(ob_importance.head(30))
 print("\nTop Fair Value Gap Features:")
 print(fvg_importance.head(30))
 
+print("\nTop Must-Add Context Features:")
+print(context_importance.head(30))
+
 print("\nTop Fractal BOS / CHoCH Structure Features:")
 print(structure_importance.head(30))
+
+print("\nTop Liquidity Sweep / Rejection Features:")
+print(sweep_importance.head(30))
+
+print("\nTop True Session-Based HTF Liquidity Features:")
+print(htf_liquidity_importance.head(40))
 
 # ========== SAVE OUTPUTS ==========
 model_path = SCRIPT_DIR / "lgbm_model.pkl"
@@ -473,6 +550,9 @@ indicator_importance_path = SCRIPT_DIR / "lgbm_indicator_feature_importance.csv"
 ob_importance_path = SCRIPT_DIR / "lgbm_ob_feature_importance.csv"
 fvg_importance_path = SCRIPT_DIR / "lgbm_fvg_feature_importance.csv"
 structure_importance_path = SCRIPT_DIR / "lgbm_structure_feature_importance.csv"
+context_importance_path = SCRIPT_DIR / "lgbm_context_feature_importance.csv"
+sweep_importance_path = SCRIPT_DIR / "lgbm_sweep_feature_importance.csv"
+htf_liquidity_importance_path = SCRIPT_DIR / "lgbm_htf_liquidity_feature_importance.csv"
 metadata_path = SCRIPT_DIR / "lgbm_training_metadata.pkl"
 
 joblib.dump(model, model_path)
@@ -483,6 +563,9 @@ indicator_importance.to_csv(indicator_importance_path, header=["importance"])
 ob_importance.to_csv(ob_importance_path, header=["importance"])
 fvg_importance.to_csv(fvg_importance_path, header=["importance"])
 structure_importance.to_csv(structure_importance_path, header=["importance"])
+context_importance.to_csv(context_importance_path, header=["importance"])
+sweep_importance.to_csv(sweep_importance_path, header=["importance"])
+htf_liquidity_importance.to_csv(htf_liquidity_importance_path, header=["importance"])
 
 metadata = {
     "best_threshold": BEST_THRESHOLD,
@@ -497,13 +580,68 @@ metadata = {
     "test_rows": len(X_test),
     "excluded_columns": actual_exclude_cols,
     "uses_dynamic_sl_tp_dataset": True,
+    "uses_live_style_sl_tp_labeling": True,
     "uses_htf_bias_strength_features": True,
     "uses_htf_safe_backward_merge_dataset": True,
     "uses_order_block_breaker_features": True,
     "uses_fair_value_gap_features": True,
     "uses_fractal_bos_choch_structure_features": True,
     "uses_entry_style_target": True,
-    "note": "Fixed training script: excludes leakage/result columns, evaluates all 7 entry-style classes, computes returns using the predicted class candidate return, and reports fractal BOS/CHoCH structure feature importance."
+    "uses_must_add_context_features": True,
+    "uses_liquidity_sweep_rejection_features": True,
+    "uses_advanced_sweep_strength_features": True,
+    "uses_wick_rejection_strength_features": True,
+    "uses_multitimeframe_sweep_alignment_features": True,
+    "uses_true_session_htf_liquidity_features": True,
+    "keeps_existing_rolling_daily_context_features": True,
+    "true_session_htf_liquidity_features": [
+        "prev_daily_high", "prev_daily_low", "prev_daily_mid", "prev_daily_range",
+        "prev_weekly_high", "prev_weekly_low", "prev_weekly_mid", "prev_weekly_range",
+        "prev_monthly_high", "prev_monthly_low", "prev_monthly_mid", "prev_monthly_range",
+        "dist_to_prev_daily_high", "dist_to_prev_daily_low",
+        "dist_to_prev_weekly_high", "dist_to_prev_weekly_low",
+        "dist_to_prev_monthly_high", "dist_to_prev_monthly_low",
+        "near_prev_daily_high", "near_prev_daily_low",
+        "near_prev_weekly_high", "near_prev_weekly_low",
+        "near_prev_monthly_high", "near_prev_monthly_low",
+        "swept_prev_daily_high", "swept_prev_daily_low",
+        "swept_prev_weekly_high", "swept_prev_weekly_low",
+        "swept_prev_monthly_high", "swept_prev_monthly_low",
+        "reject_prev_daily_high", "reject_prev_daily_low",
+        "reject_prev_weekly_high", "reject_prev_weekly_low",
+        "reject_prev_monthly_high", "reject_prev_monthly_low",
+        "reclaim_prev_daily_high", "reclaim_prev_daily_low",
+        "reclaim_prev_weekly_high", "reclaim_prev_weekly_low",
+        "reclaim_prev_monthly_high", "reclaim_prev_monthly_low",
+        "prev_daily_range_position", "prev_weekly_range_position", "prev_monthly_range_position",
+        "prev_daily_premium_discount", "prev_weekly_premium_discount", "prev_monthly_premium_discount",
+        "htf_liquidity_near_high_score", "htf_liquidity_near_low_score",
+        "htf_liquidity_sweep_high_score", "htf_liquidity_sweep_low_score",
+        "htf_liquidity_reject_high_score", "htf_liquidity_reject_low_score",
+        "htf_liquidity_reversal_bias", "htf_liquidity_continuation_bias",
+        "daily_weekly_liquidity_confluence_high", "daily_weekly_liquidity_confluence_low"
+    ],
+    "must_add_context_features": ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "session_asia", "session_london", "session_ny", "london_open", "ny_open", "daily_position", "dist_to_daily_high", "dist_to_daily_low", "volatility_zscore"],
+    "liquidity_sweep_features": [
+        "prev_high_20", "prev_low_20",
+        "sweep_high", "sweep_low",
+        "sweep_reject_high", "sweep_reject_low",
+        "sweep_high_depth", "sweep_low_depth",
+        "sweep_high_strength", "sweep_low_strength",
+        "sweep_high_atr_strength", "sweep_low_atr_strength",
+        "sweep_high_wick_ratio", "sweep_low_wick_ratio",
+        "sweep_high_wick_rejection_strength", "sweep_low_wick_rejection_strength",
+        "strong_sweep_reject_high", "strong_sweep_reject_low",
+        "recent_sweep_high", "recent_sweep_low",
+        "recent_sweep_reject_high", "recent_sweep_reject_low",
+        "recent_strong_sweep_reject_high", "recent_strong_sweep_reject_low",
+        "sweep_high_context_score", "sweep_low_context_score",
+        "sweep_reject_high_context_score", "sweep_reject_low_context_score",
+        "strong_sweep_reject_high_context_score", "strong_sweep_reject_low_context_score",
+        "sweep_high_atr_strength_sum", "sweep_low_atr_strength_sum",
+        "sweep_high_wick_rejection_strength_sum", "sweep_low_wick_rejection_strength_sum"
+    ],
+    "note": "Live-style SL/TP training script: excludes leakage/result columns including live_style_* and label_* helper columns, evaluates all 7 entry-style classes, computes returns using the predicted class candidate return, and reports feature importance groups."
 }
 joblib.dump(metadata, metadata_path)
 
@@ -517,6 +655,9 @@ print(f"Feature importance saved to: {feature_importance_path}")
 print(f"Indicator feature importance saved to: {indicator_importance_path}")
 print(f"Order block feature importance saved to: {ob_importance_path}")
 print(f"Fair value gap feature importance saved to: {fvg_importance_path}")
+print(f"Context feature importance saved to: {context_importance_path}")
+print(f"Liquidity sweep feature importance saved to: {sweep_importance_path}")
+print(f"HTF liquidity feature importance saved to: {htf_liquidity_importance_path}")
 print(f"Training metadata saved to: {metadata_path}")
 
 if len(filtered_test) > 0:
