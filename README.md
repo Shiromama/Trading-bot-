@@ -1,2 +1,2 @@
 # Trading-bot-
-trying to build a trading bot using Random forest and/or gradient boosting 
+trying to build a trading bot using light gradient boosting machine (LGBM) 
