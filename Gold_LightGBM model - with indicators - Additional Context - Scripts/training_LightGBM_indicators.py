@@ -519,6 +519,62 @@ htf_liquidity_importance = feature_importance[
     )
 ]
 
+session_liquidity_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "session_liquidity|current_asia|current_london|current_ny|prev_asia_session|prev_london_session|prev_ny_session|in_asia_killzone|in_london_killzone|in_ny_killzone|in_london_ny_overlap|in_asia_session_liquidity_window|in_london_session_liquidity_window|in_ny_session_liquidity_window|london_swept_asia|london_reject_asia|ny_swept_london|ny_reject_london|ny_swept_asia|ny_reject_asia|london_asia_sweep|ny_london_sweep|ny_asia_sweep|killzone_session_sweep",
+        case=False,
+        regex=True
+    )
+]
+
+advanced_liquidity_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "advanced_liquidity|weighted_session|weighted_london|weighted_ny|session_high_reject_decay_max|session_low_reject_decay_max|session_high_sweep_decay_max|session_low_sweep_decay_max|session_reject_decay_bias|session_sweep_decay_bias|session_high_proximity_max|session_low_proximity_max|session_high_rejection_strength_cont|session_low_rejection_strength_cont|session_rejection_strength_bias_cont|liquidity_fusion|entry_zone_liquidity_fusion|structure_bias_normalized|liquidity_interaction|session_high_near_any|session_low_near_any|session_high_bearish_structure|session_low_bullish_structure",
+        case=False,
+        regex=True
+    )
+]
+
+behavior_flow_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "body_atr_ratio|signed_body_atr_ratio|range_atr_ratio|candle_efficiency|displacement|expansion_bar|impulse_body_atr|range_expansion|volume_expansion|compression|breakout_after_compression|box_range|box_position|bb_width|seq_|dnt_",
+        case=False,
+        regex=True
+    )
+]
+
+displacement_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "body_atr_ratio|signed_body_atr_ratio|range_atr_ratio|candle_efficiency|displacement|expansion_bar|impulse_body_atr|range_expansion|volume_expansion",
+        case=False,
+        regex=True
+    )
+]
+
+compression_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "compression|breakout_after_compression|box_range|box_position|bb_width",
+        case=False,
+        regex=True
+    )
+]
+
+sequence_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "^seq_",
+        case=False,
+        regex=True
+    )
+]
+
+do_not_trade_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "^dnt_",
+        case=False,
+        regex=True
+    )
+]
+
 print("\nTop Indicator / Regime Features:")
 print(indicator_importance.head(30))
 
@@ -540,6 +596,25 @@ print(sweep_importance.head(30))
 print("\nTop True Session-Based HTF Liquidity Features:")
 print(htf_liquidity_importance.head(40))
 
+print("\nTop ICT Session Liquidity Features:")
+print(session_liquidity_importance.head(40))
+
+
+print("\nTop Behavior Flow Upgrade Features:")
+print(behavior_flow_importance.head(50))
+
+print("\nTop Displacement / Expansion Features:")
+print(displacement_importance.head(40))
+
+print("\nTop Compression -> Expansion Features:")
+print(compression_importance.head(40))
+
+print("\nTop Multi-Timeframe Sequence Awareness Features:")
+print(sequence_importance.head(40))
+
+print("\nTop Do-Not-Trade Intelligence Features:")
+print(do_not_trade_importance.head(40))
+
 # ========== SAVE OUTPUTS ==========
 model_path = SCRIPT_DIR / "lgbm_model.pkl"
 features_path = SCRIPT_DIR / "lgbm_features.pkl"
@@ -553,6 +628,13 @@ structure_importance_path = SCRIPT_DIR / "lgbm_structure_feature_importance.csv"
 context_importance_path = SCRIPT_DIR / "lgbm_context_feature_importance.csv"
 sweep_importance_path = SCRIPT_DIR / "lgbm_sweep_feature_importance.csv"
 htf_liquidity_importance_path = SCRIPT_DIR / "lgbm_htf_liquidity_feature_importance.csv"
+session_liquidity_importance_path = SCRIPT_DIR / "lgbm_session_liquidity_feature_importance.csv"
+advanced_liquidity_importance_path = SCRIPT_DIR / "lgbm_advanced_liquidity_feature_importance.csv"
+behavior_flow_importance_path = SCRIPT_DIR / "lgbm_behavior_flow_feature_importance.csv"
+displacement_importance_path = SCRIPT_DIR / "lgbm_displacement_feature_importance.csv"
+compression_importance_path = SCRIPT_DIR / "lgbm_compression_feature_importance.csv"
+sequence_importance_path = SCRIPT_DIR / "lgbm_sequence_feature_importance.csv"
+do_not_trade_importance_path = SCRIPT_DIR / "lgbm_do_not_trade_feature_importance.csv"
 metadata_path = SCRIPT_DIR / "lgbm_training_metadata.pkl"
 
 joblib.dump(model, model_path)
@@ -566,6 +648,13 @@ structure_importance.to_csv(structure_importance_path, header=["importance"])
 context_importance.to_csv(context_importance_path, header=["importance"])
 sweep_importance.to_csv(sweep_importance_path, header=["importance"])
 htf_liquidity_importance.to_csv(htf_liquidity_importance_path, header=["importance"])
+session_liquidity_importance.to_csv(session_liquidity_importance_path, header=["importance"])
+advanced_liquidity_importance.to_csv(advanced_liquidity_importance_path, header=["importance"])
+behavior_flow_importance.to_csv(behavior_flow_importance_path, header=["importance"])
+displacement_importance.to_csv(displacement_importance_path, header=["importance"])
+compression_importance.to_csv(compression_importance_path, header=["importance"])
+sequence_importance.to_csv(sequence_importance_path, header=["importance"])
+do_not_trade_importance.to_csv(do_not_trade_importance_path, header=["importance"])
 
 metadata = {
     "best_threshold": BEST_THRESHOLD,
@@ -593,6 +682,16 @@ metadata = {
     "uses_wick_rejection_strength_features": True,
     "uses_multitimeframe_sweep_alignment_features": True,
     "uses_true_session_htf_liquidity_features": True,
+    "uses_ict_session_liquidity_features": True,
+    "uses_advanced_liquidity_strength_features": True,
+    "uses_time_decayed_liquidity_features": True,
+    "uses_weighted_session_liquidity_features": True,
+    "uses_ob_fvg_liquidity_fusion_features": True,
+    "uses_behavior_flow_upgrade_features": True,
+    "uses_displacement_expansion_features": True,
+    "uses_compression_expansion_features": True,
+    "uses_multitimeframe_sequence_awareness_features": True,
+    "uses_do_not_trade_intelligence_features": True,
     "keeps_existing_rolling_daily_context_features": True,
     "true_session_htf_liquidity_features": [
         "prev_daily_high", "prev_daily_low", "prev_daily_mid", "prev_daily_range",
@@ -641,7 +740,47 @@ metadata = {
         "sweep_high_atr_strength_sum", "sweep_low_atr_strength_sum",
         "sweep_high_wick_rejection_strength_sum", "sweep_low_wick_rejection_strength_sum"
     ],
-    "note": "Live-style SL/TP training script: excludes leakage/result columns including live_style_* and label_* helper columns, evaluates all 7 entry-style classes, computes returns using the predicted class candidate return, and reports feature importance groups."
+    "ict_session_liquidity_features": [
+        "current_asia_high", "current_asia_low", "current_london_high", "current_london_low", "current_ny_high", "current_ny_low",
+        "prev_asia_session_high", "prev_asia_session_low", "prev_london_session_high", "prev_london_session_low", "prev_ny_session_high", "prev_ny_session_low",
+        "near_prev_asia_session_high", "near_prev_asia_session_low", "near_prev_london_session_high", "near_prev_london_session_low", "near_prev_ny_session_high", "near_prev_ny_session_low",
+        "swept_prev_asia_session_high", "swept_prev_asia_session_low", "swept_prev_london_session_high", "swept_prev_london_session_low", "swept_prev_ny_session_high", "swept_prev_ny_session_low",
+        "reject_prev_asia_session_high", "reject_prev_asia_session_low", "reject_prev_london_session_high", "reject_prev_london_session_low", "reject_prev_ny_session_high", "reject_prev_ny_session_low",
+        "london_swept_asia_high", "london_swept_asia_low", "london_reject_asia_high", "london_reject_asia_low",
+        "ny_swept_london_high", "ny_swept_london_low", "ny_reject_london_high", "ny_reject_london_low",
+        "ny_swept_asia_high", "ny_swept_asia_low", "ny_reject_asia_high", "ny_reject_asia_low",
+        "session_liquidity_near_high_score", "session_liquidity_near_low_score",
+        "session_liquidity_sweep_high_score", "session_liquidity_sweep_low_score",
+        "session_liquidity_reject_high_score", "session_liquidity_reject_low_score",
+        "session_liquidity_reversal_bias", "session_liquidity_continuation_bias",
+        "london_asia_sweep_reversal_bias", "ny_london_sweep_reversal_bias", "ny_asia_sweep_reversal_bias",
+        "killzone_session_sweep_score"
+    ],
+    "behavior_flow_upgrade_feature_groups": {
+        "displacement_expansion": [
+            "body_atr_ratio", "signed_body_atr_ratio", "range_atr_ratio",
+            "candle_efficiency", "bull_displacement", "bear_displacement",
+            "expansion_bar", "impulse_body_atr", "displacement_pressure"
+        ],
+        "compression_expansion": [
+            "range_compression_ratio_20_100", "atr_compression_ratio_20_100",
+            "box_range_pct_20", "box_position_20", "bb_width_20",
+            "is_compressed", "breakout_after_compression"
+        ],
+        "sequence_awareness": [
+            "seq_bos_up_count", "seq_bos_down_count", "seq_choch_up_count",
+            "seq_choch_down_count", "seq_sweep_pressure_bias",
+            "seq_rejection_reversal_bias", "seq_displacement_bias",
+            "seq_market_pressure_bias_20", "seq_market_activity_score_20"
+        ],
+        "do_not_trade_intelligence": [
+            "dnt_context_conflict_score", "dnt_structure_flip_count_20",
+            "dnt_both_sides_swept_20", "dnt_weak_displacement_environment",
+            "dnt_unresolved_compression", "dnt_conflicting_structure_liquidity",
+            "dnt_uncertainty_score", "dnt_low_quality_trade_environment"
+        ]
+    },
+    "note": "Live-style SL/TP training script: excludes leakage/result columns including live_style_* and label_* helper columns, evaluates all 7 entry-style classes, computes returns using the predicted class candidate return, and reports feature importance groups including behavior-flow upgrades."
 }
 joblib.dump(metadata, metadata_path)
 
@@ -658,6 +797,13 @@ print(f"Fair value gap feature importance saved to: {fvg_importance_path}")
 print(f"Context feature importance saved to: {context_importance_path}")
 print(f"Liquidity sweep feature importance saved to: {sweep_importance_path}")
 print(f"HTF liquidity feature importance saved to: {htf_liquidity_importance_path}")
+print(f"ICT session liquidity feature importance saved to: {session_liquidity_importance_path}")
+print(f"Advanced liquidity feature importance saved to: {advanced_liquidity_importance_path}")
+print(f"Behavior-flow feature importance saved to: {behavior_flow_importance_path}")
+print(f"Displacement feature importance saved to: {displacement_importance_path}")
+print(f"Compression feature importance saved to: {compression_importance_path}")
+print(f"Sequence-awareness feature importance saved to: {sequence_importance_path}")
+print(f"Do-not-trade feature importance saved to: {do_not_trade_importance_path}")
 print(f"Training metadata saved to: {metadata_path}")
 
 if len(filtered_test) > 0:
