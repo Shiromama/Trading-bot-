@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import warnings
+warnings.filterwarnings("ignore")
+
 import json
 import math
 import time
@@ -16,10 +19,10 @@ import pandas as pd
 # ==========================================================
 # LIVE TRADING SETTINGS
 # ==========================================================
-SYMBOL = "XAUUSDm"
+SYMBOL = "XAUUSD"
 TIMEFRAME = mt5.TIMEFRAME_M1
 POLL_SECONDS = 2
-HOLD_BARS = 360  # closer to dataset FUTURE_SHIFT=30
+HOLD_BARS = 30  # closer to dataset FUTURE_SHIFT=30
 MAGIC_NUMBER = 2000
 ORDER_COMMENT = "lgbm-entry-style"
 ALLOW_LONG = True
@@ -28,11 +31,29 @@ ONE_POSITION_PER_SYMBOL = True
 INVERT_SIGNALS = False
 
 ONLY_TRADE_SIGNALS = True
-CONFIDENCE_THRESHOLD = 0.55
+CONFIDENCE_THRESHOLD = 0.47
 MAX_SPREAD_POINTS = None
 DEVIATION = 50
 DRY_RUN = False
 STRICT_FEATURE_MATCH = True
+
+# ===== LATE ENTRY / EXHAUSTION SETTINGS =====
+RSI_EXHAUSTION_HIGH = 70
+RSI_EXHAUSTION_LOW = 30
+
+ADX_WEAK_LEVEL = 18
+EXHAUSTION_LOOKBACKS = [10, 20, 50]
+
+LATE_ENTRY_ATR_STRETCH_THRESHOLD = 1.8
+
+# ===== EMA TREND QUALITY SETTINGS =====
+EMA_TREND_WINDOWS = [5, 10, 20, 50]
+
+# ===== MARKET CLEANLINESS SETTINGS =====
+CLEANLINESS_WINDOWS = [10, 20]
+
+# ===== ICT DISRESPECT SETTINGS =====
+ICT_DISRESPECT_WINDOWS = [5, 10, 20]
 
 # New 7-class entry-style output from the updated training script.
 ENTRY_STYLE_NAMES = {
@@ -48,12 +69,20 @@ ENTRY_STYLE_NAMES = {
 USE_PENDING_FOR_WAIT_ENTRIES = True
 PENDING_EXPIRATION_MINUTES = 10
 
-LOT_SIZE = 0.01
-STOP_LOSS_ACCOUNT_FRACTION = 0.10
-RISK_REWARD_RATIO = 2.0
+LOT_SIZE = 0.06
+RISK_REWARD_RATIO = 1.4
 USE_TAKE_PROFIT = True
+
+# ===== STOP LOSS MODE =====
+# "percentage" : risk a fraction of account balance per trade (original behaviour).
+#                Uses STOP_LOSS_ACCOUNT_FRACTION to derive the dollar risk amount.
+# "fixed_usd"  : risk a fixed dollar amount per trade regardless of balance.
+#                Uses STOP_LOSS_FIXED_USD directly.
+SL_MODE = "fixed_usd"          # "percentage" | "fixed_usd"
+STOP_LOSS_ACCOUNT_FRACTION = 0.10   # used when SL_MODE = "percentage"  (10 % of balance)
+STOP_LOSS_FIXED_USD = 15.0          # used when SL_MODE = "fixed_usd"   (e.g. $10 flat)
 MIN_BALANCE_TO_TRADE = 1.0
-MAX_TOTAL_POSITIONS = 2
+MAX_TOTAL_POSITIONS = 4
 MAX_SAME_SIDE_POSITIONS = 5
 
 # Signal flip settings
@@ -63,6 +92,16 @@ CLOSE_OPPOSITE_ON_SIGNAL = True
 ENTER_AFTER_FLIP = True
 FLIP_CLOSE_DELAY_SECONDS = 0.5
 CANCEL_PENDING_ON_FLIP = True
+
+# ===== FAST TRAILING STOPLOSS SETTINGS =====
+# Execution-layer only. This does not change model features, prediction logic,
+# signal filters, entry logic, or training compatibility.
+TRAILING_SL_ENABLED = True
+TRAIL_TRIGGER_PROGRESS = 0.50      # Move SL only after price reaches 50% of TP distance
+TRAIL_LOCK_PROGRESS = 0.10         # New SL locks 10% of TP distance beyond breakeven
+TRAIL_CHECK_SECONDS = 0.25         # Fast risk-management loop while waiting for next candle
+TRAIL_MIN_UPDATE_POINTS = 5        # Avoid tiny repeated SL modifications
+TRAIL_LOG_SKIPPED = False          # Keep terminal clean; set True for detailed trailing debug
 
 LOGIN = None
 PASSWORD = ""
@@ -83,15 +122,15 @@ ADX_PERIOD = 14
 # Order Block / Breaker Block settings - must match dataset builder
 OB_SWING_LOOKBACK = 10
 OB_USE_BODY = False
-OB_RECENT_WINDOW = 30
+OB_RECENT_WINDOW = 5
 OB_MAX_ACTIVE_ZONES = 30
 OB_NO_ZONE_DISTANCE = 10.0
 OB_NO_ZONE_AGE = 9999
 
 # Fair Value Gap settings - must match dataset builder
 FVG_THRESHOLD_PCT = 0.0
-FVG_AUTO_THRESHOLD = True
-FVG_RECENT_WINDOW = 30
+FVG_AUTO_THRESHOLD = False
+FVG_RECENT_WINDOW = 5
 FVG_MAX_ACTIVE_ZONES = 50
 FVG_NO_ZONE_DISTANCE = 10.0
 FVG_NO_ZONE_AGE = 9999
@@ -100,6 +139,47 @@ FVG_NO_ZONE_AGE = 9999
 STRUCTURE_FRACTAL_LENGTH = 5
 STRUCTURE_RECENT_WINDOW = 5
 STRUCTURE_NO_BREAK_AGE = 9999
+
+# Liquidity Sweep / Rejection settings - must match dataset builder
+SWEEP_LOOKBACK = 20
+SWEEP_REJECTION_BODY_CLOSE = True
+SWEEP_RECENT_WINDOW = 5
+SWEEP_NO_SWEEP_AGE = 9999
+SWEEP_STRONG_WICK_RATIO = 0.45
+SWEEP_STRONG_CLOSE_BEYOND_MIDPOINT = True
+
+# True session-based HTF liquidity settings - must match dataset builder
+HTF_LIQUIDITY_NEAR_ATR_MULTIPLIER = 0.35
+HTF_LIQUIDITY_NEAR_PCT_FALLBACK = 0.0015
+HTF_LIQUIDITY_RECENT_WINDOW = 10
+HTF_LIQUIDITY_NO_SWEEP_AGE = 9999
+LIVE_M1_HISTORY_BARS = 10000
+USE_DIRECT_HTF_LEVELS = True
+DIRECT_HTF_FALLBACK_TO_M1 = True
+
+# ICT Session Liquidity settings - must match dataset builder
+SESSION_LIQUIDITY_RECENT_WINDOW = 10
+SESSION_LIQUIDITY_NEAR_ATR_MULTIPLIER = 0.35
+SESSION_LIQUIDITY_NEAR_PCT_FALLBACK = 0.0015
+SESSION_LIQUIDITY_NO_SWEEP_AGE = 9999
+SESSION_WINDOWS = {
+    "asia": (0, 8),
+    "london": (8, 16),
+    "ny": (13, 21),
+}
+KILLZONE_WINDOWS = {
+    "asia_killzone": (0, 3),
+    "london_killzone": (7, 10),
+    "ny_killzone": (13, 16),
+    "london_ny_overlap": (13, 16),
+}
+
+# Smart execution layer thresholds
+STRONG_CONTEXT_CONFIDENCE_THRESHOLD = 0.55
+WEAK_CONTEXT_CONFIDENCE_THRESHOLD = 0.58
+REQUIRE_STRONG_CONTEXT_FOR_ENTRY = False
+CONTEXT_STRENGTH_MIN_SCORE = 6.57
+FLIP_ONLY_ON_STRONG_CONTEXT = False
 
 
 @dataclass
@@ -149,76 +229,62 @@ def fmt_value(value, digits: int = 4) -> str:
     return str(value)
 
 
-def print_table(title: str, rows: list[tuple[str, object]], value_width: int = 18) -> None:
+def print_table(title: str, rows: list[tuple[str, object]], value_width: int = 16, max_cols: int = 3):
     """
-    Compact terminal table printer.
+    Smart grid table:
+    - Automatically spreads rows across multiple columns
+    - Prevents vertical overflow
+    - Keeps everything visible in terminal
+    """
 
-    Short tables keep the old single-column layout. Long debug tables are
-    split in half and printed side by side so they fit better in VS Code.
-    """
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"\n[{timestamp}] {title}")
 
-    def clean_text(value, width: int) -> str:
-        value_text = fmt_value(value)
-        if len(value_text) > width:
-            value_text = value_text[: max(0, width - 3)] + "..."
-        return value_text
-
-    def calc_widths(part_rows: list[tuple[str, object]]) -> tuple[int, int]:
-        key_w = max(10, min(22, max((len(str(k)) for k, _ in part_rows), default=10)))
-        val_w = max(10, min(value_width, max((len(fmt_value(v)) for _, v in part_rows), default=10)))
-        return key_w, val_w
-
-    if len(rows) <= 18:
-        key_width, val_width = calc_widths(rows)
-        border = "+" + "-" * (key_width + 2) + "+" + "-" * (val_width + 2) + "+"
-        print(border)
-        print(f"| {'Field':<{key_width}} | {'Value':<{val_width}} |")
-        print(border)
-        for key, value in rows:
-            value_text = clean_text(value, val_width)
-            print(f"| {str(key):<{key_width}} | {value_text:<{val_width}} |")
-        print(border)
+    if not rows:
+        print("(no data)")
         return
 
-    half = (len(rows) + 1) // 2
-    left_rows = rows[:half]
-    right_rows = rows[half:]
+    # --- Clean values ---
+    def clean(value):
+        v = fmt_value(value)
+        return v[:value_width-3] + "..." if len(v) > value_width else v
 
-    left_key_w, left_val_w = calc_widths(left_rows)
-    right_key_w, right_val_w = calc_widths(right_rows)
+    # --- Split into chunks ---
+    total = len(rows)
+    cols = min(max_cols, max(1, total // 15 + 1))  # auto scale
+    chunk_size = (total + cols - 1) // cols
 
-    border = (
-        "+" + "-" * (left_key_w + 2) + "+" + "-" * (left_val_w + 2) + "+"
-        + "  "
-        + "+" + "-" * (right_key_w + 2) + "+" + "-" * (right_val_w + 2) + "+"
-    )
+    chunks = [rows[i*chunk_size:(i+1)*chunk_size] for i in range(cols)]
 
-    print(border)
-    print(
-        f"| {'Field':<{left_key_w}} | {'Value':<{left_val_w}} |  "
-        f"| {'Field':<{right_key_w}} | {'Value':<{right_val_w}} |"
-    )
-    print(border)
+    # --- Column widths ---
+    key_w = 18
+    val_w = value_width
 
-    max_len = max(len(left_rows), len(right_rows))
-    for i in range(max_len):
-        if i < len(left_rows):
-            lk, lv = left_rows[i]
-            left_line = f"| {str(lk):<{left_key_w}} | {clean_text(lv, left_val_w):<{left_val_w}} |"
-        else:
-            left_line = f"| {'':<{left_key_w}} | {'':<{left_val_w}} |"
+    # --- Build header ---
+    header = ""
+    border = ""
 
-        if i < len(right_rows):
-            rk, rv = right_rows[i]
-            right_line = f"| {str(rk):<{right_key_w}} | {clean_text(rv, right_val_w):<{right_val_w}} |"
-        else:
-            right_line = f"| {'':<{right_key_w}} | {'':<{right_val_w}} |"
-
-        print(left_line + "  " + right_line)
+    for _ in range(cols):
+        border += "+" + "-"*(key_w+2) + "+" + "-"*(val_w+2) + "+  "
+        header += f"| {'Field':<{key_w}} | {'Value':<{val_w}} |  "
 
     print(border)
+    print(header)
+    print(border)
+
+    # --- Print rows ---
+    for i in range(chunk_size):
+        line = ""
+        for c in range(cols):
+            if i < len(chunks[c]):
+                k, v = chunks[c][i]
+                line += f"| {str(k):<{key_w}} | {clean(v):<{val_w}} |  "
+            else:
+                line += f"| {'':<{key_w}} | {'':<{val_w}} |  "
+        print(line)
+
+    print(border)
+
 def signal_name(predicted_class: int) -> str:
     return ENTRY_STYLE_NAMES.get(int(predicted_class), f"UNKNOWN_{predicted_class}")
 
@@ -243,60 +309,176 @@ def position_side(position) -> int:
     return 0
 
 
-def print_signal_table(signal: Signal) -> None:
+def print_compact_pairs(title: str, items: dict, per_line: int = 3, key_width: int = 15, value_width: int = 12) -> None:
+    """
+    Crosswise / horizontal compact display.
+
+    This only changes terminal output. It does NOT affect:
+    - feature generation
+    - model predictions
+    - execution filters
+    - order placement
+    - trade logs
+    """
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"\n[{timestamp}] {title}")
+
+    cell_width = key_width + value_width + 3
+    line_width = min(110, max(70, (cell_width + 3) * per_line))
+    print("-" * line_width)
+
+    def clean_value(value):
+        if value is None:
+            value = "-"
+        elif isinstance(value, (np.floating, np.integer)):
+            value = float(value)
+        if isinstance(value, float):
+            if np.isnan(value):
+                value = "-"
+            else:
+                value = f"{value:.4f}"
+        else:
+            value = str(value)
+        if len(value) > value_width:
+            value = value[:max(0, value_width - 3)] + "..."
+        return value
+
+    row = []
+    for i, (key, value) in enumerate(items.items(), start=1):
+        k = str(key)
+        if len(k) > key_width:
+            k = k[:max(0, key_width - 3)] + "..."
+        v = clean_value(value)
+        row.append(f"{k:<{key_width}}:{v:<{value_width}}")
+        if i % per_line == 0:
+            print(" | ".join(row))
+            row = []
+
+    if row:
+        print(" | ".join(row))
+
+    print("-" * line_width)
+
+
+def print_signal_table(signal: Signal, context_strength: Optional[dict] = None) -> None:
+    """
+    Crosswise compact terminal display only.
+
+    This does NOT change model features, prediction logic, execution logic,
+    filters, orders, risk, pending orders, or trade logs. It only reduces
+    terminal clutter and prevents horizontal terminal scrolling.
+    """
     debug = getattr(signal, "debug", {}) or {}
     probs = signal.raw_probabilities
-    rows = [
-        ("bar_time", datetime.fromtimestamp(signal.bar_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")),
-        ("prediction", signal_name(signal.predicted_class)),
-        ("confidence", signal.confidence),
-        ("prob_sell_ob", probs.get("-3")),
-        ("prob_sell_fvg", probs.get("-2")),
-        ("prob_sell_now", probs.get("-1")),
-        ("prob_no_trade", probs.get("0")),
-        ("prob_buy_now", probs.get("1")),
-        ("prob_buy_fvg", probs.get("2")),
-        ("prob_buy_ob", probs.get("3")),
-        ("entry_price", debug.get("entry_price")),
-        ("wait_entry_price", debug.get("wait_entry_price")),
-        ("spread_points", debug.get("spread_points")),
-        ("1m_rsi14", debug.get("1m_rsi14")),
-        ("1m_adx14", debug.get("1m_adx14")),
-        ("5m_adx14", debug.get("5m_adx14")),
-        ("15m_adx14", debug.get("15m_adx14")),
-        ("market_trending", debug.get("market_is_trending")),
-        ("market_choppy", debug.get("market_is_choppy")),
-        ("1m_bos_up", debug.get("1m_bos_up")),
-        ("1m_bos_down", debug.get("1m_bos_down")),
-        ("1m_choch_up", debug.get("1m_choch_up")),
-        ("1m_choch_down", debug.get("1m_choch_down")),
-        ("5m_struct_dir", debug.get("5m_structure_direction")),
-        ("15m_struct_dir", debug.get("15m_structure_direction")),
-        ("struct_bull_score", debug.get("structure_bull_context_score")),
-        ("struct_bear_score", debug.get("structure_bear_context_score")),
-        ("struct_reversal", debug.get("structure_reversal_warning")),
-        ("struct_align", debug.get("structure_direction_alignment")),
-        ("15m_bull_ob", debug.get("15m_inside_bull_ob")),
-        ("15m_bear_ob", debug.get("15m_inside_bear_ob")),
-        ("1m_bull_ob", debug.get("1m_inside_bull_ob")),
-        ("1m_bear_ob", debug.get("1m_inside_bear_ob")),
-        ("bull_ob_align", debug.get("htf_ltf_bull_ob_alignment")),
-        ("bear_ob_align", debug.get("htf_ltf_bear_ob_alignment")),
-        ("ob_bull_score", debug.get("ob_bull_context_score")),
-        ("ob_bear_score", debug.get("ob_bear_context_score")),
-        ("15m_bull_fvg", debug.get("15m_inside_bull_fvg")),
-        ("15m_bear_fvg", debug.get("15m_inside_bear_fvg")),
-        ("1m_bull_fvg", debug.get("1m_inside_bull_fvg")),
-        ("1m_bear_fvg", debug.get("1m_inside_bear_fvg")),
-        ("bull_fvg_align", debug.get("htf_ltf_bull_fvg_alignment")),
-        ("bear_fvg_align", debug.get("htf_ltf_bear_fvg_alignment")),
-        ("fvg_bull_score", debug.get("fvg_bull_context_score")),
-        ("fvg_bear_score", debug.get("fvg_bear_context_score")),
-        ("bull_ob_fvg", debug.get("ob_fvg_bull_confluence")),
-        ("bear_ob_fvg", debug.get("ob_fvg_bear_confluence")),
-    ]
-    print_table("NEW CLOSED BAR / MODEL SIGNAL", rows)
 
+    def d(key: str, default: float = 0.0):
+        value = debug.get(key, default)
+        try:
+            if value is None or pd.isna(value):
+                return default
+            return float(value)
+        except Exception:
+            return default
+
+    def p(key: str) -> float:
+        try:
+            return float(probs.get(key, 0.0))
+        except Exception:
+            return 0.0
+
+    def b(value) -> str:
+        try:
+            return "Y" if float(value) >= 1 else "N"
+        except Exception:
+            return "N"
+
+    bar_time_text = datetime.fromtimestamp(signal.bar_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    print_compact_pairs(
+        "MODEL SIGNAL",
+        {
+            "bar_time": bar_time_text,
+            "prediction": signal_name(signal.predicted_class),
+            "confidence": signal.confidence,
+            "entry_price": d("entry_price"),
+            "wait_price": d("wait_entry_price", 0.0),
+            "spread_pts": d("spread_points"),
+            "P_sell_ob": p("-3"),
+            "P_sell_fvg": p("-2"),
+            "P_sell_now": p("-1"),
+            "P_no_trade": p("0"),
+            "P_buy_now": p("1"),
+            "P_buy_fvg": p("2"),
+            "P_buy_ob": p("3"),
+        },
+        per_line=3,
+        key_width=13,
+        value_width=14,
+    )
+
+    print_compact_pairs(
+        "MARKET READ",
+        {
+            "1m_rsi14": d("1m_rsi14"),
+            "ADX_1m": d("1m_adx14"),
+            "ADX_5m": d("5m_adx14"),
+            "ADX_15m": d("15m_adx14"),
+            "trending": b(d("market_is_trending")),
+            "choppy": b(d("market_is_choppy")),
+            "struct_align": d("structure_direction_alignment"),
+            "struct_bull": d("structure_bull_context_score"),
+            "struct_bear": d("structure_bear_context_score"),
+            "seq_struct": d("seq_structure_break_bias_50"),
+            "seq_sweep": d("seq_sweep_pressure_bias_50"),
+            "seq_pressure": d("seq_market_pressure_bias_20"),
+            "swept_D_hi": b(d("swept_prev_daily_high")),
+            "swept_D_lo": b(d("swept_prev_daily_low")),
+            "reject_D_hi": b(d("reject_prev_daily_high")),
+            "reject_D_lo": b(d("reject_prev_daily_low")),
+            "liq_bull": d("liquidity_interaction_bull_score"),
+            "liq_bear": d("liquidity_interaction_bear_score"),
+            "adv_liq_bias": d("advanced_liquidity_pressure_bias"),
+            "15m_disp": d("15m_displacement_pressure"),
+            "5m_disp": d("5m_displacement_pressure"),
+            "1m_disp": d("1m_displacement_pressure"),
+            "seq_comp50": d("seq_compression_count_50"),
+            "comp_break": d("seq_breakout_after_compression_count_50"),
+            "dnt_uncert": d("dnt_uncertainty_score"),
+            "dnt_conflict": d("dnt_context_conflict_score"),
+            "dnt_lowQ": b(d("dnt_low_quality_trade_environment")),
+            "reg_trade": d("regime_tradeable_score"),
+            "reg_chop": d("regime_chop_score"),
+            "fresh_bias": d("fresh_signal_bias"),
+            "exec_Q": d("exec_entry_quality_score"),
+            "liq_prio": d("liq_nearest_priority_abs"),
+            "no_trade": d("no_trade_risk_score"),
+        },
+        per_line=3,
+        key_width=13,
+        value_width=12,
+    )
+
+    if context_strength is not None:
+        print_compact_pairs(
+            "SMART EXECUTION",
+            {
+                "bull_strength": context_strength.get("bull_strength"),
+                "bear_strength": context_strength.get("bear_strength"),
+                "strong_bull": context_strength.get("strong_bull"),
+                "strong_bear": context_strength.get("strong_bear"),
+                "strong_signal": context_strength.get("strong_for_signal"),
+                "dyn_thresh": context_strength.get("dynamic_threshold"),
+                "dnt_uncert": context_strength.get("dnt_uncertainty_score"),
+                "dnt_conflict": context_strength.get("dnt_context_conflict_score"),
+                "dnt_lowQ": context_strength.get("dnt_low_quality_trade_environment"),
+                "no_trade": context_strength.get("no_trade_risk_score"),
+                "setup_hiQ": context_strength.get("high_quality_setup_score"),
+                "setup_loQ": context_strength.get("low_quality_setup_score"),
+            },
+            per_line=3,
+            key_width=13,
+            value_width=12,
+        )
 
 def append_trade_log(row: dict) -> None:
     header = not LOG_PATH.exists()
@@ -453,6 +635,725 @@ def create_features(df: pd.DataFrame, prefix: str, use_rsi: bool = False, use_at
         df = add_adx(df, prefix, ADX_PERIOD)
     return df
 
+
+
+# ========== LIQUIDITY SWEEP / REJECTION FEATURES ==========
+def add_liquidity_sweep_features(
+    df: pd.DataFrame,
+    prefix: str,
+    lookback: int = SWEEP_LOOKBACK,
+    recent_window: int = SWEEP_RECENT_WINDOW,
+) -> pd.DataFrame:
+    """
+    Adds liquidity sweep, rejection, strength, wick-quality, and ATR-normalized features.
+
+    No future leakage:
+      - prev_high/prev_low use shift(1) before rolling.
+      - current candle is only compared against already completed candles.
+
+    Core idea:
+      - sweep_high / sweep_low = price took recent high/low liquidity.
+      - sweep_reject_high / sweep_reject_low = price took liquidity then closed back inside.
+      - *_strength = how far price swept beyond the level.
+      - *_atr_strength = sweep size normalized by volatility.
+      - *_wick_rejection_strength = how much of the candle rejected from the swept level.
+    """
+    out = df.copy()
+
+    prev_high = out["high"].shift(1).rolling(lookback, min_periods=lookback).max()
+    prev_low = out["low"].shift(1).rolling(lookback, min_periods=lookback).min()
+
+    out[f"{prefix}_prev_high_{lookback}"] = prev_high
+    out[f"{prefix}_prev_low_{lookback}"] = prev_low
+
+    out[f"{prefix}_sweep_high"] = (out["high"] > prev_high).astype(int)
+    out[f"{prefix}_sweep_low"] = (out["low"] < prev_low).astype(int)
+
+    if SWEEP_REJECTION_BODY_CLOSE:
+        out[f"{prefix}_sweep_reject_high"] = (
+            (out[f"{prefix}_sweep_high"] == 1) &
+            (out["close"] < prev_high)
+        ).astype(int)
+        out[f"{prefix}_sweep_reject_low"] = (
+            (out[f"{prefix}_sweep_low"] == 1) &
+            (out["close"] > prev_low)
+        ).astype(int)
+    else:
+        out[f"{prefix}_sweep_reject_high"] = (
+            (out[f"{prefix}_sweep_high"] == 1) &
+            (out[["open", "close"]].max(axis=1) < prev_high)
+        ).astype(int)
+        out[f"{prefix}_sweep_reject_low"] = (
+            (out[f"{prefix}_sweep_low"] == 1) &
+            (out[["open", "close"]].min(axis=1) > prev_low)
+        ).astype(int)
+
+    # ----- Sweep depth / strength -----
+    raw_high_depth = (out["high"] - prev_high).clip(lower=0)
+    raw_low_depth = (prev_low - out["low"]).clip(lower=0)
+
+    out[f"{prefix}_sweep_high_depth"] = np.where(out[f"{prefix}_sweep_high"] == 1, raw_high_depth, 0.0)
+    out[f"{prefix}_sweep_low_depth"] = np.where(out[f"{prefix}_sweep_low"] == 1, raw_low_depth, 0.0)
+
+    out[f"{prefix}_sweep_high_strength"] = out[f"{prefix}_sweep_high_depth"] / (out["close"] + EPS)
+    out[f"{prefix}_sweep_low_strength"] = out[f"{prefix}_sweep_low_depth"] / (out["close"] + EPS)
+
+    atr_col = f"{prefix}_atr14"
+    if atr_col in out.columns:
+        atr_safe = out[atr_col].replace(0, np.nan)
+    else:
+        atr_safe = out[f"{prefix}_range"].rolling(lookback, min_periods=max(3, lookback // 2)).mean().replace(0, np.nan)
+
+    out[f"{prefix}_sweep_high_atr_strength"] = out[f"{prefix}_sweep_high_depth"] / (atr_safe + EPS)
+    out[f"{prefix}_sweep_low_atr_strength"] = out[f"{prefix}_sweep_low_depth"] / (atr_safe + EPS)
+
+    # ----- Wick rejection quality -----
+    range_safe = out[f"{prefix}_range"].replace(0, np.nan) if f"{prefix}_range" in out.columns else (out["high"] - out["low"]).replace(0, np.nan)
+    upper_wick_ratio = out.get(f"{prefix}_upper_wick_ratio", (out["high"] - out[["open", "close"]].max(axis=1)) / (range_safe + EPS))
+    lower_wick_ratio = out.get(f"{prefix}_lower_wick_ratio", (out[["open", "close"]].min(axis=1) - out["low"]) / (range_safe + EPS))
+    close_pos = out.get(f"{prefix}_close_pos_in_range", (out["close"] - out["low"]) / (range_safe + EPS))
+
+    out[f"{prefix}_sweep_high_wick_ratio"] = np.where(out[f"{prefix}_sweep_high"] == 1, upper_wick_ratio, 0.0)
+    out[f"{prefix}_sweep_low_wick_ratio"] = np.where(out[f"{prefix}_sweep_low"] == 1, lower_wick_ratio, 0.0)
+
+    # How much price rejected back from the swept extreme into the old range.
+    out[f"{prefix}_sweep_high_rejection_depth"] = np.where(
+        out[f"{prefix}_sweep_reject_high"] == 1,
+        (out["high"] - out["close"]).clip(lower=0),
+        0.0
+    )
+    out[f"{prefix}_sweep_low_rejection_depth"] = np.where(
+        out[f"{prefix}_sweep_reject_low"] == 1,
+        (out["close"] - out["low"]).clip(lower=0),
+        0.0
+    )
+
+    out[f"{prefix}_sweep_high_rejection_atr_strength"] = out[f"{prefix}_sweep_high_rejection_depth"] / (atr_safe + EPS)
+    out[f"{prefix}_sweep_low_rejection_atr_strength"] = out[f"{prefix}_sweep_low_rejection_depth"] / (atr_safe + EPS)
+
+    out[f"{prefix}_sweep_high_wick_rejection_strength"] = (
+        out[f"{prefix}_sweep_reject_high"] * upper_wick_ratio * out[f"{prefix}_sweep_high_atr_strength"]
+    )
+    out[f"{prefix}_sweep_low_wick_rejection_strength"] = (
+        out[f"{prefix}_sweep_reject_low"] * lower_wick_ratio * out[f"{prefix}_sweep_low_atr_strength"]
+    )
+
+    strong_high_extra = close_pos < 0.5 if SWEEP_STRONG_CLOSE_BEYOND_MIDPOINT else True
+    strong_low_extra = close_pos > 0.5 if SWEEP_STRONG_CLOSE_BEYOND_MIDPOINT else True
+
+    out[f"{prefix}_strong_sweep_reject_high"] = (
+        (out[f"{prefix}_sweep_reject_high"] == 1) &
+        (upper_wick_ratio >= SWEEP_STRONG_WICK_RATIO) &
+        strong_high_extra
+    ).astype(int)
+
+    out[f"{prefix}_strong_sweep_reject_low"] = (
+        (out[f"{prefix}_sweep_reject_low"] == 1) &
+        (lower_wick_ratio >= SWEEP_STRONG_WICK_RATIO) &
+        strong_low_extra
+    ).astype(int)
+
+    out[f"{prefix}_dist_to_prev_high_{lookback}"] = (prev_high - out["close"]) / (out["close"] + EPS)
+    out[f"{prefix}_dist_to_prev_low_{lookback}"] = (out["close"] - prev_low) / (out["close"] + EPS)
+
+    # ----- Recent/age features -----
+    def bars_since(signal: pd.Series) -> pd.Series:
+        last_idx = pd.Series(
+            np.where(signal.astype(bool), np.arange(len(out)), np.nan),
+            index=out.index
+        ).ffill()
+        bar_index = pd.Series(np.arange(len(out)), index=out.index)
+        return (bar_index - last_idx).fillna(SWEEP_NO_SWEEP_AGE)
+
+    out[f"{prefix}_bars_since_sweep_high"] = bars_since(out[f"{prefix}_sweep_high"])
+    out[f"{prefix}_bars_since_sweep_low"] = bars_since(out[f"{prefix}_sweep_low"])
+    out[f"{prefix}_bars_since_sweep_reject_high"] = bars_since(out[f"{prefix}_sweep_reject_high"])
+    out[f"{prefix}_bars_since_sweep_reject_low"] = bars_since(out[f"{prefix}_sweep_reject_low"])
+    out[f"{prefix}_bars_since_strong_sweep_reject_high"] = bars_since(out[f"{prefix}_strong_sweep_reject_high"])
+    out[f"{prefix}_bars_since_strong_sweep_reject_low"] = bars_since(out[f"{prefix}_strong_sweep_reject_low"])
+
+    out[f"{prefix}_recent_sweep_high"] = (out[f"{prefix}_bars_since_sweep_high"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_sweep_low"] = (out[f"{prefix}_bars_since_sweep_low"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_sweep_reject_high"] = (out[f"{prefix}_bars_since_sweep_reject_high"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_sweep_reject_low"] = (out[f"{prefix}_bars_since_sweep_reject_low"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_strong_sweep_reject_high"] = (out[f"{prefix}_bars_since_strong_sweep_reject_high"] <= recent_window).astype(int)
+    out[f"{prefix}_recent_strong_sweep_reject_low"] = (out[f"{prefix}_bars_since_strong_sweep_reject_low"] <= recent_window).astype(int)
+
+    out[f"{prefix}_sweep_reversal_bias"] = (
+        out[f"{prefix}_recent_sweep_reject_low"] - out[f"{prefix}_recent_sweep_reject_high"]
+    )
+    out[f"{prefix}_strong_sweep_reversal_bias"] = (
+        out[f"{prefix}_recent_strong_sweep_reject_low"] - out[f"{prefix}_recent_strong_sweep_reject_high"]
+    )
+    out[f"{prefix}_sweep_continuation_bias"] = (
+        out[f"{prefix}_recent_sweep_high"] - out[f"{prefix}_recent_sweep_low"]
+    )
+
+    return out
+
+
+def add_htf_liquidity_level_features(df: pd.DataFrame, raw_1m: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds previous Daily / Weekly / Monthly high-low liquidity features.
+
+    No future leakage:
+      - Daily/weekly/monthly levels are built from completed periods only.
+      - The current day uses the previous day's high/low.
+      - The current week uses the previous week's high/low.
+      - The current month uses the previous month's high/low.
+
+    Main feature groups:
+      - raw previous levels: prev_daily_high, prev_weekly_low, etc.
+      - distance to each level
+      - near level flags
+      - swept / rejected / reclaimed level flags
+      - bars since sweep
+      - previous range position and premium/discount context
+      - combined HTF liquidity bias scores
+    """
+    out = df.copy()
+    raw = raw_1m.reindex(out.index).copy()
+
+    if not isinstance(raw.index, pd.DatetimeIndex):
+        raise ValueError("raw_1m must have a DatetimeIndex before adding HTF liquidity features.")
+
+    high = raw["high"]
+    low = raw["low"]
+    close = raw["close"]
+
+    # ATR-based near-threshold if available; percent fallback if ATR is missing.
+    if "1m_atr14" in out.columns:
+        near_distance = (out["1m_atr14"].abs() * HTF_LIQUIDITY_NEAR_ATR_MULTIPLIER).fillna(close * HTF_LIQUIDITY_NEAR_PCT_FALLBACK)
+    else:
+        near_distance = close * HTF_LIQUIDITY_NEAR_PCT_FALLBACK
+
+    def previous_period_levels(period_code: str) -> tuple[pd.Series, pd.Series]:
+        period = raw.index.to_period(period_code)
+        period_frame = pd.DataFrame({"period": period, "high": high, "low": low}, index=raw.index)
+        levels = period_frame.groupby("period").agg(period_high=("high", "max"), period_low=("low", "min"))
+        prev_high_by_period = levels["period_high"].shift(1)
+        prev_low_by_period = levels["period_low"].shift(1)
+        prev_high = pd.Series(period.map(prev_high_by_period), index=raw.index, dtype="float64")
+        prev_low = pd.Series(period.map(prev_low_by_period), index=raw.index, dtype="float64")
+        return prev_high, prev_low
+
+    def bars_since(signal: pd.Series) -> pd.Series:
+        last_idx = pd.Series(np.where(signal.astype(bool), np.arange(len(out)), np.nan), index=out.index).ffill()
+        bar_idx = pd.Series(np.arange(len(out)), index=out.index)
+        return (bar_idx - last_idx).fillna(HTF_LIQUIDITY_NO_SWEEP_AGE)
+
+    level_specs = [
+        ("daily", "D"),
+        ("weekly", "W"),
+        ("monthly", "M"),
+    ]
+
+    for name, period_code in level_specs:
+        prev_high, prev_low = previous_period_levels(period_code)
+        prev_mid = (prev_high + prev_low) / 2.0
+        prev_range = (prev_high - prev_low).replace(0, np.nan)
+
+        out[f"prev_{name}_high"] = prev_high
+        out[f"prev_{name}_low"] = prev_low
+        out[f"prev_{name}_mid"] = prev_mid
+        out[f"prev_{name}_range"] = prev_range
+
+        out[f"dist_to_prev_{name}_high"] = (prev_high - close) / (close + EPS)
+        out[f"dist_to_prev_{name}_low"] = (close - prev_low) / (close + EPS)
+        out[f"abs_dist_to_prev_{name}_high"] = (prev_high - close).abs() / (close + EPS)
+        out[f"abs_dist_to_prev_{name}_low"] = (close - prev_low).abs() / (close + EPS)
+
+        out[f"near_prev_{name}_high"] = ((prev_high - close).abs() <= near_distance).astype(int)
+        out[f"near_prev_{name}_low"] = ((close - prev_low).abs() <= near_distance).astype(int)
+
+        out[f"closed_above_prev_{name}_high"] = (close > prev_high).astype(int)
+        out[f"closed_below_prev_{name}_low"] = (close < prev_low).astype(int)
+        out[f"inside_prev_{name}_range"] = ((close <= prev_high) & (close >= prev_low)).astype(int)
+
+        out[f"swept_prev_{name}_high"] = (high > prev_high).astype(int)
+        out[f"swept_prev_{name}_low"] = (low < prev_low).astype(int)
+
+        # Rejection = takes liquidity, then closes back inside the previous range.
+        out[f"reject_prev_{name}_high"] = ((out[f"swept_prev_{name}_high"] == 1) & (close < prev_high)).astype(int)
+        out[f"reject_prev_{name}_low"] = ((out[f"swept_prev_{name}_low"] == 1) & (close > prev_low)).astype(int)
+
+        # Reclaim / breakout confirmation = closes beyond the swept level.
+        out[f"reclaim_prev_{name}_high"] = ((out[f"swept_prev_{name}_high"] == 1) & (close > prev_high)).astype(int)
+        out[f"reclaim_prev_{name}_low"] = ((out[f"swept_prev_{name}_low"] == 1) & (close < prev_low)).astype(int)
+
+        out[f"prev_{name}_range_position"] = ((close - prev_low) / (prev_range + EPS)).clip(lower=-1, upper=2)
+        out[f"above_prev_{name}_mid"] = (close > prev_mid).astype(int)
+        out[f"below_prev_{name}_mid"] = (close < prev_mid).astype(int)
+        out[f"prev_{name}_premium_discount"] = np.where(close > prev_mid, 1, np.where(close < prev_mid, -1, 0))
+
+        out[f"prev_{name}_high_sweep_depth"] = np.where(out[f"swept_prev_{name}_high"] == 1, (high - prev_high).clip(lower=0), 0.0)
+        out[f"prev_{name}_low_sweep_depth"] = np.where(out[f"swept_prev_{name}_low"] == 1, (prev_low - low).clip(lower=0), 0.0)
+        out[f"prev_{name}_high_sweep_depth_pct"] = out[f"prev_{name}_high_sweep_depth"] / (close + EPS)
+        out[f"prev_{name}_low_sweep_depth_pct"] = out[f"prev_{name}_low_sweep_depth"] / (close + EPS)
+
+        out[f"bars_since_swept_prev_{name}_high"] = bars_since(out[f"swept_prev_{name}_high"])
+        out[f"bars_since_swept_prev_{name}_low"] = bars_since(out[f"swept_prev_{name}_low"])
+        out[f"bars_since_reject_prev_{name}_high"] = bars_since(out[f"reject_prev_{name}_high"])
+        out[f"bars_since_reject_prev_{name}_low"] = bars_since(out[f"reject_prev_{name}_low"])
+
+        out[f"recent_swept_prev_{name}_high"] = (out[f"bars_since_swept_prev_{name}_high"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_swept_prev_{name}_low"] = (out[f"bars_since_swept_prev_{name}_low"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_reject_prev_{name}_high"] = (out[f"bars_since_reject_prev_{name}_high"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_reject_prev_{name}_low"] = (out[f"bars_since_reject_prev_{name}_low"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+
+    # Combined liquidity context scores.
+    out["htf_liquidity_near_high_score"] = out[["near_prev_daily_high", "near_prev_weekly_high", "near_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_near_low_score"] = out[["near_prev_daily_low", "near_prev_weekly_low", "near_prev_monthly_low"]].sum(axis=1)
+
+    out["htf_liquidity_sweep_high_score"] = out[["recent_swept_prev_daily_high", "recent_swept_prev_weekly_high", "recent_swept_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_sweep_low_score"] = out[["recent_swept_prev_daily_low", "recent_swept_prev_weekly_low", "recent_swept_prev_monthly_low"]].sum(axis=1)
+
+    out["htf_liquidity_reject_high_score"] = out[["recent_reject_prev_daily_high", "recent_reject_prev_weekly_high", "recent_reject_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_reject_low_score"] = out[["recent_reject_prev_daily_low", "recent_reject_prev_weekly_low", "recent_reject_prev_monthly_low"]].sum(axis=1)
+
+    # Positive = bullish liquidity reaction; negative = bearish liquidity reaction.
+    out["htf_liquidity_reversal_bias"] = out["htf_liquidity_reject_low_score"] - out["htf_liquidity_reject_high_score"]
+    out["htf_liquidity_continuation_bias"] = out["htf_liquidity_sweep_high_score"] - out["htf_liquidity_sweep_low_score"]
+
+    out["daily_weekly_liquidity_confluence_high"] = ((out["near_prev_daily_high"] == 1) & (out["near_prev_weekly_high"] == 1)).astype(int)
+    out["daily_weekly_liquidity_confluence_low"] = ((out["near_prev_daily_low"] == 1) & (out["near_prev_weekly_low"] == 1)).astype(int)
+
+    return out
+
+
+# ========== ICT SESSION LIQUIDITY FEATURES ==========
+def add_session_liquidity_features(df: pd.DataFrame, raw_1m: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds ICT-style session liquidity features on top of the existing feature set.
+
+    No future leakage:
+      - current session high/low uses expanding values up to the current row only
+      - previous session levels are taken from the most recently completed same session
+      - London/NY sweep interaction features use already-known Asia/London levels
+    """
+    out = df.copy()
+    raw = raw_1m.reindex(out.index).copy()
+
+    if not isinstance(raw.index, pd.DatetimeIndex):
+        raise ValueError("raw_1m must have a DatetimeIndex before adding session liquidity features.")
+
+    high = raw["high"].astype(float)
+    low = raw["low"].astype(float)
+    close = raw["close"].astype(float)
+    hour = out.index.hour
+
+    if "1m_atr14" in out.columns:
+        near_distance = (out["1m_atr14"].abs() * SESSION_LIQUIDITY_NEAR_ATR_MULTIPLIER).fillna(
+            close * SESSION_LIQUIDITY_NEAR_PCT_FALLBACK
+        )
+    else:
+        near_distance = close * SESSION_LIQUIDITY_NEAR_PCT_FALLBACK
+
+    def in_hour_window(start_hour: int, end_hour: int) -> np.ndarray:
+        if start_hour < end_hour:
+            return (hour >= start_hour) & (hour < end_hour)
+        return (hour >= start_hour) | (hour < end_hour)
+
+    def bars_since(signal: pd.Series) -> pd.Series:
+        last_idx = pd.Series(np.where(signal.astype(bool), np.arange(len(out)), np.nan), index=out.index).ffill()
+        bar_idx = pd.Series(np.arange(len(out)), index=out.index)
+        return (bar_idx - last_idx).fillna(SESSION_LIQUIDITY_NO_SWEEP_AGE)
+
+    for kz_name, (start_h, end_h) in KILLZONE_WINDOWS.items():
+        out[f"in_{kz_name}"] = in_hour_window(start_h, end_h).astype(int)
+
+    previous_level_names = []
+
+    for session_name, (start_h, end_h) in SESSION_WINDOWS.items():
+        mask = pd.Series(in_hour_window(start_h, end_h), index=out.index)
+        out[f"in_{session_name}_session_liquidity_window"] = mask.astype(int)
+
+        session_date = pd.Series(out.index.normalize(), index=out.index)
+        if start_h > end_h:
+            session_date.loc[hour < end_h] = session_date.loc[hour < end_h] - pd.Timedelta(days=1)
+
+        session_key = pd.Series(pd.NA, index=out.index, dtype="object")
+        session_key.loc[mask] = session_date.loc[mask].astype(str) + f"_{session_name}"
+
+        session_high = high.where(mask).groupby(session_key).cummax()
+        session_low = low.where(mask).groupby(session_key).cummin()
+
+        completed_sessions = pd.DataFrame({
+            "session_key": session_key[mask],
+            "session_high": high[mask],
+            "session_low": low[mask],
+        }).groupby("session_key").agg(
+            session_high=("session_high", "max"),
+            session_low=("session_low", "min"),
+        )
+
+        prev_high_map = completed_sessions["session_high"].shift(1)
+        prev_low_map = completed_sessions["session_low"].shift(1)
+        prev_session_high = pd.Series(session_key.map(prev_high_map), index=out.index, dtype="float64").ffill()
+        prev_session_low = pd.Series(session_key.map(prev_low_map), index=out.index, dtype="float64").ffill()
+
+        out[f"current_{session_name}_high"] = session_high.ffill()
+        out[f"current_{session_name}_low"] = session_low.ffill()
+        out[f"prev_{session_name}_session_high"] = prev_session_high
+        out[f"prev_{session_name}_session_low"] = prev_session_low
+        out[f"prev_{session_name}_session_mid"] = (prev_session_high + prev_session_low) / 2.0
+        out[f"prev_{session_name}_session_range"] = (prev_session_high - prev_session_low).replace(0, np.nan)
+
+        previous_level_names.append(session_name)
+
+        ph = out[f"prev_{session_name}_session_high"]
+        pl = out[f"prev_{session_name}_session_low"]
+        pm = out[f"prev_{session_name}_session_mid"]
+        pr = out[f"prev_{session_name}_session_range"]
+
+        out[f"dist_to_prev_{session_name}_session_high"] = (ph - close) / (close + EPS)
+        out[f"dist_to_prev_{session_name}_session_low"] = (close - pl) / (close + EPS)
+        out[f"abs_dist_to_prev_{session_name}_session_high"] = (ph - close).abs() / (close + EPS)
+        out[f"abs_dist_to_prev_{session_name}_session_low"] = (close - pl).abs() / (close + EPS)
+
+        out[f"near_prev_{session_name}_session_high"] = ((ph - close).abs() <= near_distance).astype(int)
+        out[f"near_prev_{session_name}_session_low"] = ((close - pl).abs() <= near_distance).astype(int)
+
+        out[f"swept_prev_{session_name}_session_high"] = (high > ph).astype(int)
+        out[f"swept_prev_{session_name}_session_low"] = (low < pl).astype(int)
+        out[f"reject_prev_{session_name}_session_high"] = ((out[f"swept_prev_{session_name}_session_high"] == 1) & (close < ph)).astype(int)
+        out[f"reject_prev_{session_name}_session_low"] = ((out[f"swept_prev_{session_name}_session_low"] == 1) & (close > pl)).astype(int)
+        out[f"reclaim_prev_{session_name}_session_high"] = ((out[f"swept_prev_{session_name}_session_high"] == 1) & (close > ph)).astype(int)
+        out[f"reclaim_prev_{session_name}_session_low"] = ((out[f"swept_prev_{session_name}_session_low"] == 1) & (close < pl)).astype(int)
+
+        out[f"prev_{session_name}_session_range_position"] = ((close - pl) / (pr + EPS)).clip(lower=-1, upper=2)
+        out[f"prev_{session_name}_session_premium_discount"] = np.where(close > pm, 1, np.where(close < pm, -1, 0))
+
+        out[f"bars_since_swept_prev_{session_name}_session_high"] = bars_since(out[f"swept_prev_{session_name}_session_high"])
+        out[f"bars_since_swept_prev_{session_name}_session_low"] = bars_since(out[f"swept_prev_{session_name}_session_low"])
+        out[f"bars_since_reject_prev_{session_name}_session_high"] = bars_since(out[f"reject_prev_{session_name}_session_high"])
+        out[f"bars_since_reject_prev_{session_name}_session_low"] = bars_since(out[f"reject_prev_{session_name}_session_low"])
+
+        out[f"recent_swept_prev_{session_name}_session_high"] = (out[f"bars_since_swept_prev_{session_name}_session_high"] <= SESSION_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_swept_prev_{session_name}_session_low"] = (out[f"bars_since_swept_prev_{session_name}_session_low"] <= SESSION_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_reject_prev_{session_name}_session_high"] = (out[f"bars_since_reject_prev_{session_name}_session_high"] <= SESSION_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_reject_prev_{session_name}_session_low"] = (out[f"bars_since_reject_prev_{session_name}_session_low"] <= SESSION_LIQUIDITY_RECENT_WINDOW).astype(int)
+
+    out["london_swept_asia_high"] = ((out.get("session_london", 0) == 1) & (high > out["current_asia_high"])).astype(int)
+    out["london_swept_asia_low"] = ((out.get("session_london", 0) == 1) & (low < out["current_asia_low"])).astype(int)
+    out["london_reject_asia_high"] = ((out["london_swept_asia_high"] == 1) & (close < out["current_asia_high"])).astype(int)
+    out["london_reject_asia_low"] = ((out["london_swept_asia_low"] == 1) & (close > out["current_asia_low"])).astype(int)
+
+    out["ny_swept_london_high"] = ((out.get("session_ny", 0) == 1) & (high > out["current_london_high"])).astype(int)
+    out["ny_swept_london_low"] = ((out.get("session_ny", 0) == 1) & (low < out["current_london_low"])).astype(int)
+    out["ny_reject_london_high"] = ((out["ny_swept_london_high"] == 1) & (close < out["current_london_high"])).astype(int)
+    out["ny_reject_london_low"] = ((out["ny_swept_london_low"] == 1) & (close > out["current_london_low"])).astype(int)
+
+    out["ny_swept_asia_high"] = ((out.get("session_ny", 0) == 1) & (high > out["current_asia_high"])).astype(int)
+    out["ny_swept_asia_low"] = ((out.get("session_ny", 0) == 1) & (low < out["current_asia_low"])).astype(int)
+    out["ny_reject_asia_high"] = ((out["ny_swept_asia_high"] == 1) & (close < out["current_asia_high"])).astype(int)
+    out["ny_reject_asia_low"] = ((out["ny_swept_asia_low"] == 1) & (close > out["current_asia_low"])).astype(int)
+
+    high_near_cols = [f"near_prev_{name}_session_high" for name in previous_level_names]
+    low_near_cols = [f"near_prev_{name}_session_low" for name in previous_level_names]
+    high_sweep_cols = [f"recent_swept_prev_{name}_session_high" for name in previous_level_names]
+    low_sweep_cols = [f"recent_swept_prev_{name}_session_low" for name in previous_level_names]
+    high_reject_cols = [f"recent_reject_prev_{name}_session_high" for name in previous_level_names]
+    low_reject_cols = [f"recent_reject_prev_{name}_session_low" for name in previous_level_names]
+
+    out["session_liquidity_near_high_score"] = out[high_near_cols].sum(axis=1)
+    out["session_liquidity_near_low_score"] = out[low_near_cols].sum(axis=1)
+    out["session_liquidity_sweep_high_score"] = out[high_sweep_cols].sum(axis=1)
+    out["session_liquidity_sweep_low_score"] = out[low_sweep_cols].sum(axis=1)
+    out["session_liquidity_reject_high_score"] = out[high_reject_cols].sum(axis=1)
+    out["session_liquidity_reject_low_score"] = out[low_reject_cols].sum(axis=1)
+
+    out["session_liquidity_reversal_bias"] = out["session_liquidity_reject_low_score"] - out["session_liquidity_reject_high_score"]
+    out["session_liquidity_continuation_bias"] = out["session_liquidity_sweep_high_score"] - out["session_liquidity_sweep_low_score"]
+
+    out["london_asia_sweep_reversal_bias"] = out["london_reject_asia_low"] - out["london_reject_asia_high"]
+    out["ny_london_sweep_reversal_bias"] = out["ny_reject_london_low"] - out["ny_reject_london_high"]
+    out["ny_asia_sweep_reversal_bias"] = out["ny_reject_asia_low"] - out["ny_reject_asia_high"]
+
+    out["killzone_session_sweep_score"] = (
+        out["in_london_killzone"] * (out["london_swept_asia_high"] + out["london_swept_asia_low"]) +
+        out["in_ny_killzone"] * (out["ny_swept_london_high"] + out["ny_swept_london_low"] + out["ny_swept_asia_high"] + out["ny_swept_asia_low"])
+    )
+
+    return out
+
+# ========== ADVANCED LIQUIDITY INTERACTION FEATURES ==========
+def add_advanced_liquidity_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds strength-based ICT liquidity interaction features without removing anything.
+
+    This layer turns rare binary events into more learnable continuous signals:
+      - time-decayed session sweep/rejection signals
+      - weighted London/NY killzone liquidity behavior
+      - session rejection strength using wick quality + close position
+      - OB/FVG proximity fused with prior liquidity reactions
+      - bullish/bearish continuous liquidity pressure scores
+
+    No future leakage:
+      - uses only current-row and historical bars_since/session features already built earlier
+      - does not use future_return, targets, or candidate label returns
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    def bool_c(name: str) -> pd.Series:
+        return (c(name, 0.0) == 1)
+
+    def decay_from_bars(name: str, half_life: float = 10.0, max_age: float = 9998.0) -> pd.Series:
+        bars = c(name, max_age).clip(lower=0, upper=max_age)
+        decayed = np.exp(-bars / max(half_life, EPS))
+        return pd.Series(np.where(bars >= max_age, 0.0, decayed), index=out.index)
+
+    def proximity_from_dist(name: str, scale: float = 1000.0) -> pd.Series:
+        # dist columns are usually pct/relative distances. Higher = closer to liquidity/zone.
+        dist = c(name, 10.0).abs().clip(lower=0)
+        return (1.0 / (1.0 + dist * scale)).clip(lower=0, upper=1)
+
+    # ----- Ensure basic interaction flags exist too -----
+    session_high_near = bool_c("near_prev_asia_session_high") | bool_c("near_prev_london_session_high") | bool_c("near_prev_ny_session_high")
+    session_low_near = bool_c("near_prev_asia_session_low") | bool_c("near_prev_london_session_low") | bool_c("near_prev_ny_session_low")
+    session_high_reject_now = bool_c("reject_prev_asia_session_high") | bool_c("reject_prev_london_session_high") | bool_c("reject_prev_ny_session_high")
+    session_low_reject_now = bool_c("reject_prev_asia_session_low") | bool_c("reject_prev_london_session_low") | bool_c("reject_prev_ny_session_low")
+
+    out["session_high_near_any"] = session_high_near.astype(int)
+    out["session_low_near_any"] = session_low_near.astype(int)
+    out["session_high_reject_now_any"] = session_high_reject_now.astype(int)
+    out["session_low_reject_now_any"] = session_low_reject_now.astype(int)
+
+    if "hour" in out.columns:
+        out["ict_london_killzone"] = ((out["hour"] >= 7) & (out["hour"] <= 10)).astype(int)
+        out["ict_ny_killzone"] = ((out["hour"] >= 13) & (out["hour"] <= 16)).astype(int)
+    else:
+        out["ict_london_killzone"] = c("in_london_killzone").astype(int)
+        out["ict_ny_killzone"] = c("in_ny_killzone").astype(int)
+
+    out["session_high_bearish_structure"] = (
+        session_high_near & (c("structure_bear_context_score") > c("structure_bull_context_score"))
+    ).astype(int)
+    out["session_low_bullish_structure"] = (
+        session_low_near & (c("structure_bull_context_score") > c("structure_bear_context_score"))
+    ).astype(int)
+
+    # ----- Time-decayed session sweep/rejection memory -----
+    high_reject_decays = [
+        decay_from_bars("bars_since_reject_prev_asia_session_high"),
+        decay_from_bars("bars_since_reject_prev_london_session_high"),
+        decay_from_bars("bars_since_reject_prev_ny_session_high"),
+    ]
+    low_reject_decays = [
+        decay_from_bars("bars_since_reject_prev_asia_session_low"),
+        decay_from_bars("bars_since_reject_prev_london_session_low"),
+        decay_from_bars("bars_since_reject_prev_ny_session_low"),
+    ]
+    high_sweep_decays = [
+        decay_from_bars("bars_since_swept_prev_asia_session_high"),
+        decay_from_bars("bars_since_swept_prev_london_session_high"),
+        decay_from_bars("bars_since_swept_prev_ny_session_high"),
+    ]
+    low_sweep_decays = [
+        decay_from_bars("bars_since_swept_prev_asia_session_low"),
+        decay_from_bars("bars_since_swept_prev_london_session_low"),
+        decay_from_bars("bars_since_swept_prev_ny_session_low"),
+    ]
+
+    out["session_high_reject_decay_max"] = pd.concat(high_reject_decays, axis=1).max(axis=1)
+    out["session_low_reject_decay_max"] = pd.concat(low_reject_decays, axis=1).max(axis=1)
+    out["session_high_sweep_decay_max"] = pd.concat(high_sweep_decays, axis=1).max(axis=1)
+    out["session_low_sweep_decay_max"] = pd.concat(low_sweep_decays, axis=1).max(axis=1)
+    out["session_reject_decay_bias"] = out["session_low_reject_decay_max"] - out["session_high_reject_decay_max"]
+    out["session_sweep_decay_bias"] = out["session_high_sweep_decay_max"] - out["session_low_sweep_decay_max"]
+
+    # ----- Continuous proximity to session liquidity -----
+    out["session_high_proximity_max"] = pd.concat([
+        proximity_from_dist("abs_dist_to_prev_asia_session_high"),
+        proximity_from_dist("abs_dist_to_prev_london_session_high"),
+        proximity_from_dist("abs_dist_to_prev_ny_session_high"),
+    ], axis=1).max(axis=1)
+    out["session_low_proximity_max"] = pd.concat([
+        proximity_from_dist("abs_dist_to_prev_asia_session_low"),
+        proximity_from_dist("abs_dist_to_prev_london_session_low"),
+        proximity_from_dist("abs_dist_to_prev_ny_session_low"),
+    ], axis=1).max(axis=1)
+
+    # ----- Wick/close-position based rejection strength -----
+    close_pos = c("1m_close_pos_in_range", 0.5).clip(lower=0, upper=1)
+    upper_wick = c("1m_upper_wick_ratio").clip(lower=0, upper=1)
+    lower_wick = c("1m_lower_wick_ratio").clip(lower=0, upper=1)
+
+    # High rejection is bearish when upper wick is large and close is lower in candle.
+    out["session_high_rejection_strength_cont"] = (
+        out["session_high_reject_decay_max"] * upper_wick * (1.0 - close_pos)
+    )
+    # Low rejection is bullish when lower wick is large and close is higher in candle.
+    out["session_low_rejection_strength_cont"] = (
+        out["session_low_reject_decay_max"] * lower_wick * close_pos
+    )
+    out["session_rejection_strength_bias_cont"] = (
+        out["session_low_rejection_strength_cont"] - out["session_high_rejection_strength_cont"]
+    )
+
+    # ----- Weighted session logic: London/NY sweeps matter more than generic all-day signals -----
+    london_weight = 1.0 + 0.50 * c("ict_london_killzone") + 0.25 * c("session_london")
+    ny_weight = 1.0 + 0.50 * c("ict_ny_killzone") + 0.25 * c("session_ny")
+
+    out["weighted_london_asia_high_sweep_strength"] = london_weight * (
+        c("london_swept_asia_high") + 2.0 * c("london_reject_asia_high")
+    ) * (1.0 + upper_wick)
+    out["weighted_london_asia_low_sweep_strength"] = london_weight * (
+        c("london_swept_asia_low") + 2.0 * c("london_reject_asia_low")
+    ) * (1.0 + lower_wick)
+    out["weighted_ny_london_high_sweep_strength"] = ny_weight * (
+        c("ny_swept_london_high") + 2.0 * c("ny_reject_london_high")
+    ) * (1.0 + upper_wick)
+    out["weighted_ny_london_low_sweep_strength"] = ny_weight * (
+        c("ny_swept_london_low") + 2.0 * c("ny_reject_london_low")
+    ) * (1.0 + lower_wick)
+    out["weighted_ny_asia_high_sweep_strength"] = ny_weight * (
+        c("ny_swept_asia_high") + 2.0 * c("ny_reject_asia_high")
+    ) * (1.0 + upper_wick)
+    out["weighted_ny_asia_low_sweep_strength"] = ny_weight * (
+        c("ny_swept_asia_low") + 2.0 * c("ny_reject_asia_low")
+    ) * (1.0 + lower_wick)
+
+    out["weighted_session_bullish_reversal_strength"] = (
+        out["weighted_london_asia_low_sweep_strength"] +
+        out["weighted_ny_london_low_sweep_strength"] +
+        out["weighted_ny_asia_low_sweep_strength"] +
+        out["session_low_rejection_strength_cont"]
+    )
+    out["weighted_session_bearish_reversal_strength"] = (
+        out["weighted_london_asia_high_sweep_strength"] +
+        out["weighted_ny_london_high_sweep_strength"] +
+        out["weighted_ny_asia_high_sweep_strength"] +
+        out["session_high_rejection_strength_cont"]
+    )
+    out["weighted_session_reversal_strength_bias"] = (
+        out["weighted_session_bullish_reversal_strength"] - out["weighted_session_bearish_reversal_strength"]
+    )
+
+    # ----- OB/FVG + liquidity fusion: continuous instead of rare binary only -----
+    bull_ob_prox = proximity_from_dist("1m_dist_to_bull_ob")
+    bear_ob_prox = proximity_from_dist("1m_dist_to_bear_ob")
+    bull_fvg_prox = proximity_from_dist("1m_dist_to_bull_fvg")
+    bear_fvg_prox = proximity_from_dist("1m_dist_to_bear_fvg")
+
+    out["bull_ob_liquidity_fusion_strength"] = bull_ob_prox * out["session_low_rejection_strength_cont"]
+    out["bear_ob_liquidity_fusion_strength"] = bear_ob_prox * out["session_high_rejection_strength_cont"]
+    out["bull_fvg_liquidity_fusion_strength"] = bull_fvg_prox * out["session_low_rejection_strength_cont"]
+    out["bear_fvg_liquidity_fusion_strength"] = bear_fvg_prox * out["session_high_rejection_strength_cont"]
+
+    out["bull_entry_zone_liquidity_fusion_strength"] = (
+        out["bull_ob_liquidity_fusion_strength"] + out["bull_fvg_liquidity_fusion_strength"]
+    )
+    out["bear_entry_zone_liquidity_fusion_strength"] = (
+        out["bear_ob_liquidity_fusion_strength"] + out["bear_fvg_liquidity_fusion_strength"]
+    )
+    out["entry_zone_liquidity_fusion_bias"] = (
+        out["bull_entry_zone_liquidity_fusion_strength"] - out["bear_entry_zone_liquidity_fusion_strength"]
+    )
+
+    # ----- Structure-weighted liquidity pressure -----
+    bull_struct = c("structure_bull_context_score")
+    bear_struct = c("structure_bear_context_score")
+    struct_total = (bull_struct + bear_struct).replace(0, np.nan)
+    out["structure_bias_normalized"] = ((bull_struct - bear_struct) / (struct_total + EPS)).fillna(0.0).clip(-1, 1)
+
+    out["advanced_liquidity_bull_pressure"] = (
+        out["weighted_session_bullish_reversal_strength"] +
+        out["bull_entry_zone_liquidity_fusion_strength"] +
+        out["session_low_proximity_max"] * out["session_low_reject_decay_max"]
+    ) * (1.0 + out["structure_bias_normalized"].clip(lower=0))
+
+    out["advanced_liquidity_bear_pressure"] = (
+        out["weighted_session_bearish_reversal_strength"] +
+        out["bear_entry_zone_liquidity_fusion_strength"] +
+        out["session_high_proximity_max"] * out["session_high_reject_decay_max"]
+    ) * (1.0 + (-out["structure_bias_normalized"].clip(upper=0)))
+
+    out["advanced_liquidity_pressure_bias"] = (
+        out["advanced_liquidity_bull_pressure"] - out["advanced_liquidity_bear_pressure"]
+    )
+    out["advanced_liquidity_pressure_abs"] = out["advanced_liquidity_pressure_bias"].abs()
+
+    # ----- Legacy-style simple scores, kept for compatibility if older training reports expect them -----
+    out["liquidity_interaction_bull_score"] = (
+        out["session_low_bullish_structure"] +
+        (out["session_low_reject_now_any"] == 1).astype(int) +
+        (out["bull_entry_zone_liquidity_fusion_strength"] > 0).astype(int)
+    )
+    out["liquidity_interaction_bear_score"] = (
+        out["session_high_bearish_structure"] +
+        (out["session_high_reject_now_any"] == 1).astype(int) +
+        (out["bear_entry_zone_liquidity_fusion_strength"] > 0).astype(int)
+    )
+    out["liquidity_interaction_score_diff"] = out["liquidity_interaction_bull_score"] - out["liquidity_interaction_bear_score"]
+
+    return out
+
+# ========== MUST-ADD CONTEXT FEATURES: TIME + DAILY POSITION + VOLATILITY REGIME ==========
+def add_must_have_context_features(df: pd.DataFrame, raw_1m: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds the first context upgrade only, without changing/removing existing features.
+
+    Features added:
+      - cyclical time: hour_sin/hour_cos, dow_sin/dow_cos
+      - session flags: Asia, London, NY, London open, NY open
+      - daily range context: daily_position and distance to rolling daily high/low
+      - volatility regime context: ATR rolling mean and ATR z-score
+
+    Notes:
+      - Uses the existing datetime index from MT5 data.
+      - Rolling daily high/low uses 1440 one-minute candles, so it stays historical only.
+      - ATR z-score uses existing 1m_atr_pct14, which is already calculated before this function runs.
+    """
+    out = df.copy()
+
+    # ----- Time cycle features -----
+    out["hour"] = out.index.hour
+    out["day_of_week"] = out.index.dayofweek
+
+    out["hour_sin"] = np.sin(2 * np.pi * out["hour"] / 24)
+    out["hour_cos"] = np.cos(2 * np.pi * out["hour"] / 24)
+    out["dow_sin"] = np.sin(2 * np.pi * out["day_of_week"] / 7)
+    out["dow_cos"] = np.cos(2 * np.pi * out["day_of_week"] / 7)
+
+    # ----- Session / activity-window flags -----
+    # These use the timestamp as provided by your MT5 CSV/server time.
+    out["session_asia"] = ((out["hour"] >= 0) & (out["hour"] < 8)).astype(int)
+    out["session_london"] = ((out["hour"] >= 8) & (out["hour"] < 16)).astype(int)
+    out["session_ny"] = ((out["hour"] >= 13) & (out["hour"] < 21)).astype(int)
+    out["london_open"] = ((out["hour"] >= 7) & (out["hour"] <= 10)).astype(int)
+    out["ny_open"] = ((out["hour"] >= 13) & (out["hour"] <= 16)).astype(int)
+
+    # ----- Daily price-location context -----
+    raw_aligned = raw_1m.reindex(out.index)
+    daily_high = raw_aligned["high"].rolling(1440, min_periods=60).max()
+    daily_low = raw_aligned["low"].rolling(1440, min_periods=60).min()
+    daily_range = daily_high - daily_low
+
+    out["daily_high"] = daily_high
+    out["daily_low"] = daily_low
+    out["daily_range"] = daily_range
+    out["daily_position"] = (raw_aligned["close"] - daily_low) / (daily_range + EPS)
+    out["dist_to_daily_high"] = (daily_high - raw_aligned["close"]) / (raw_aligned["close"] + EPS)
+    out["dist_to_daily_low"] = (raw_aligned["close"] - daily_low) / (raw_aligned["close"] + EPS)
+
+    # Keep daily_position clean even during startup rows or flat-range moments.
+    out["daily_position"] = out["daily_position"].clip(lower=0, upper=1)
+
+    # ----- Volatility regime context -----
+    if "1m_atr_pct14" not in out.columns:
+        raise ValueError("1m_atr_pct14 is required before adding volatility context features.")
+
+    out["atr_mean_100"] = out["1m_atr_pct14"].rolling(100, min_periods=20).mean()
+    out["atr_std_100"] = out["1m_atr_pct14"].rolling(100, min_periods=20).std()
+    out["volatility_zscore"] = (out["1m_atr_pct14"] - out["atr_mean_100"]) / (out["atr_std_100"] + EPS)
+
+    return out
 
 
 # ========== FRACTAL BOS / CHoCH MARKET STRUCTURE FEATURES ==========
@@ -893,7 +1794,1120 @@ def add_entry_zone_price_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame
     return out
 
 
-def fetch_raw_timeframes(symbol: str, m1_count: int = 1200) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+
+# ========== BEHAVIOR FLOW UPGRADE SETTINGS ==========
+# Added on top of the existing feature stack. These settings do not alter labels.
+SEQUENCE_WINDOWS = [5, 10, 20, 50]
+DISPLACEMENT_BODY_ATR_THRESHOLD = 1.20
+DISPLACEMENT_EFFICIENCY_THRESHOLD = 0.55
+EXPANSION_RANGE_MEAN_THRESHOLD = 1.40
+COMPRESSION_SHORT_WINDOW = 20
+COMPRESSION_LONG_WINDOW = 100
+COMPRESSION_THRESHOLD = 0.75
+CHOP_FLIP_WINDOW = 20
+DO_NOT_TRADE_CONFLICT_THRESHOLD = 2.0
+
+
+# ========== DISPLACEMENT / EXPANSION DETECTION ==========
+def add_displacement_expansion_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """
+    Adds displacement and expansion features without changing existing logic.
+
+    Purpose:
+      - separates weak BOS/drift moves from aggressive displacement candles
+      - uses only current and historical candle data
+      - works even when ATR is not available on 5m/15m by falling back to range mean
+    """
+    out = df.copy()
+
+    def col(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    range_safe = col(f"{prefix}_range", 0.0).replace(0, np.nan)
+    body = col(f"{prefix}_body", 0.0)
+    body_abs = body.abs()
+
+    atr_col = f"{prefix}_atr14"
+    if atr_col in out.columns:
+        atr_safe = out[atr_col].replace([np.inf, -np.inf], np.nan).replace(0, np.nan)
+    else:
+        atr_safe = col(f"{prefix}_range", 0.0).rolling(14, min_periods=5).mean().replace(0, np.nan)
+
+    range_mean10 = col(f"{prefix}_range_mean10", 0.0).replace(0, np.nan)
+    volume_vs_mean = col(f"{prefix}_volume_vs_mean10", 1.0)
+    close_pos = col(f"{prefix}_close_pos_in_range", 0.5).clip(0, 1)
+
+    out[f"{prefix}_body_atr_ratio"] = body_abs / (atr_safe + EPS)
+    out[f"{prefix}_signed_body_atr_ratio"] = body / (atr_safe + EPS)
+    out[f"{prefix}_range_atr_ratio"] = col(f"{prefix}_range", 0.0) / (atr_safe + EPS)
+    out[f"{prefix}_candle_efficiency"] = body_abs / (range_safe + EPS)
+    out[f"{prefix}_signed_candle_efficiency"] = np.sign(body) * out[f"{prefix}_candle_efficiency"]
+    out[f"{prefix}_range_expansion_vs_mean10"] = col(f"{prefix}_range", 0.0) / (range_mean10 + EPS)
+    out[f"{prefix}_volume_expansion_vs_mean10"] = volume_vs_mean
+
+    out[f"{prefix}_bull_displacement"] = (
+        (body > 0) &
+        (out[f"{prefix}_body_atr_ratio"] >= DISPLACEMENT_BODY_ATR_THRESHOLD) &
+        (out[f"{prefix}_candle_efficiency"] >= DISPLACEMENT_EFFICIENCY_THRESHOLD) &
+        (close_pos >= 0.60)
+    ).astype(int)
+
+    out[f"{prefix}_bear_displacement"] = (
+        (body < 0) &
+        (out[f"{prefix}_body_atr_ratio"] >= DISPLACEMENT_BODY_ATR_THRESHOLD) &
+        (out[f"{prefix}_candle_efficiency"] >= DISPLACEMENT_EFFICIENCY_THRESHOLD) &
+        (close_pos <= 0.40)
+    ).astype(int)
+
+    out[f"{prefix}_expansion_bar"] = (
+        (out[f"{prefix}_range_expansion_vs_mean10"] >= EXPANSION_RANGE_MEAN_THRESHOLD) &
+        (out[f"{prefix}_body_atr_ratio"] >= 0.80)
+    ).astype(int)
+
+    out[f"{prefix}_bull_expansion_bar"] = ((out[f"{prefix}_expansion_bar"] == 1) & (body > 0)).astype(int)
+    out[f"{prefix}_bear_expansion_bar"] = ((out[f"{prefix}_expansion_bar"] == 1) & (body < 0)).astype(int)
+
+    # Multi-candle impulse: signed body pressure normalized by current volatility.
+    for win in [3, 5, 10]:
+        out[f"{prefix}_impulse_body_atr_{win}"] = body.rolling(win, min_periods=max(2, win // 2)).sum() / (atr_safe + EPS)
+        out[f"{prefix}_bull_displacement_count_{win}"] = out[f"{prefix}_bull_displacement"].rolling(win, min_periods=1).sum()
+        out[f"{prefix}_bear_displacement_count_{win}"] = out[f"{prefix}_bear_displacement"].rolling(win, min_periods=1).sum()
+        out[f"{prefix}_expansion_count_{win}"] = out[f"{prefix}_expansion_bar"].rolling(win, min_periods=1).sum()
+
+    out[f"{prefix}_displacement_pressure"] = (
+        out[f"{prefix}_signed_body_atr_ratio"] *
+        out[f"{prefix}_candle_efficiency"] *
+        out[f"{prefix}_range_expansion_vs_mean10"].clip(lower=0, upper=5)
+    )
+
+    out[f"{prefix}_displacement_pressure_5"] = out[f"{prefix}_displacement_pressure"].rolling(5, min_periods=1).sum()
+    out[f"{prefix}_displacement_pressure_10"] = out[f"{prefix}_displacement_pressure"].rolling(10, min_periods=1).sum()
+
+    return out
+
+
+# ========== MARKET COMPRESSION -> EXPANSION DETECTION ==========
+def add_compression_expansion_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """
+    Adds compression, squeeze, and breakout-from-compression features.
+
+    Purpose:
+      - lets the model recognize coiled/low-energy markets
+      - identifies when expansion happens immediately after compression
+      - uses only rolling historical windows
+    """
+    out = df.copy()
+
+    def col(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    rng = col(f"{prefix}_range", 0.0)
+    close = out["close"] if "close" in out.columns else pd.Series(np.nan, index=out.index)
+    high = out["high"] if "high" in out.columns else pd.Series(np.nan, index=out.index)
+    low = out["low"] if "low" in out.columns else pd.Series(np.nan, index=out.index)
+
+    range_short = rng.rolling(COMPRESSION_SHORT_WINDOW, min_periods=5).mean()
+    range_long = rng.rolling(COMPRESSION_LONG_WINDOW, min_periods=20).mean()
+    out[f"{prefix}_range_compression_ratio_20_100"] = range_short / (range_long + EPS)
+
+    if f"{prefix}_atr_pct14" in out.columns:
+        atr_pct = col(f"{prefix}_atr_pct14", 0.0)
+    else:
+        atr_pct = rng / (close + EPS)
+
+    atr_short = atr_pct.rolling(COMPRESSION_SHORT_WINDOW, min_periods=5).mean()
+    atr_long = atr_pct.rolling(COMPRESSION_LONG_WINDOW, min_periods=20).mean()
+    out[f"{prefix}_atr_compression_ratio_20_100"] = atr_short / (atr_long + EPS)
+
+    roll_high = high.rolling(COMPRESSION_SHORT_WINDOW, min_periods=5).max()
+    roll_low = low.rolling(COMPRESSION_SHORT_WINDOW, min_periods=5).min()
+    out[f"{prefix}_box_range_pct_20"] = (roll_high - roll_low) / (close + EPS)
+    out[f"{prefix}_box_position_20"] = ((close - roll_low) / ((roll_high - roll_low) + EPS)).clip(0, 1)
+
+    # Bollinger-style width using existing price only; no external indicator dependency.
+    ma20 = close.rolling(20, min_periods=10).mean()
+    std20 = close.rolling(20, min_periods=10).std()
+    bb_width = (4.0 * std20) / (ma20 + EPS)
+    out[f"{prefix}_bb_width_20"] = bb_width
+    out[f"{prefix}_bb_width_compression_ratio"] = bb_width / (bb_width.rolling(100, min_periods=20).mean() + EPS)
+
+    out[f"{prefix}_is_compressed"] = (
+        (out[f"{prefix}_range_compression_ratio_20_100"] <= COMPRESSION_THRESHOLD) |
+        (out[f"{prefix}_atr_compression_ratio_20_100"] <= COMPRESSION_THRESHOLD) |
+        (out[f"{prefix}_bb_width_compression_ratio"] <= COMPRESSION_THRESHOLD)
+    ).astype(int)
+
+    out[f"{prefix}_compression_count_20"] = out[f"{prefix}_is_compressed"].rolling(20, min_periods=1).sum()
+    out[f"{prefix}_compression_count_50"] = out[f"{prefix}_is_compressed"].rolling(50, min_periods=1).sum()
+
+    expansion = col(f"{prefix}_expansion_bar", 0.0)
+    prev_compression = out[f"{prefix}_is_compressed"].shift(1).rolling(20, min_periods=1).max().fillna(0)
+    out[f"{prefix}_breakout_after_compression"] = ((expansion == 1) & (prev_compression == 1)).astype(int)
+
+    bull_disp = col(f"{prefix}_bull_displacement", 0.0)
+    bear_disp = col(f"{prefix}_bear_displacement", 0.0)
+    out[f"{prefix}_bull_breakout_after_compression"] = ((out[f"{prefix}_breakout_after_compression"] == 1) & (bull_disp == 1)).astype(int)
+    out[f"{prefix}_bear_breakout_after_compression"] = ((out[f"{prefix}_breakout_after_compression"] == 1) & (bear_disp == 1)).astype(int)
+
+    return out
+
+
+# ========== MULTI-TIMEFRAME SEQUENCE AWARENESS ==========
+def add_multitimeframe_sequence_awareness_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds rolling memory of structure, sweeps, displacement, and compression.
+
+    Purpose:
+      - converts isolated events into behavior flow
+      - helps the model learn persistence, repeated pressure, and failed moves
+      - no future leakage: all rolling windows use current/past rows only
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    for win in SEQUENCE_WINDOWS:
+        # Structure memory
+        out[f"seq_bos_up_count_{win}"] = (c("1m_bos_up") + c("5m_bos_up") + c("15m_bos_up")).rolling(win, min_periods=1).sum()
+        out[f"seq_bos_down_count_{win}"] = (c("1m_bos_down") + c("5m_bos_down") + c("15m_bos_down")).rolling(win, min_periods=1).sum()
+        out[f"seq_choch_up_count_{win}"] = (c("1m_choch_up") + c("5m_choch_up") + c("15m_choch_up")).rolling(win, min_periods=1).sum()
+        out[f"seq_choch_down_count_{win}"] = (c("1m_choch_down") + c("5m_choch_down") + c("15m_choch_down")).rolling(win, min_periods=1).sum()
+        out[f"seq_structure_break_bias_{win}"] = (
+            out[f"seq_bos_up_count_{win}"] + out[f"seq_choch_up_count_{win}"] -
+            out[f"seq_bos_down_count_{win}"] - out[f"seq_choch_down_count_{win}"]
+        )
+        out[f"seq_structure_instability_{win}"] = (
+            out[f"seq_choch_up_count_{win}"] + out[f"seq_choch_down_count_{win}"]
+        )
+
+        # Liquidity memory
+        out[f"seq_sweep_high_count_{win}"] = (c("1m_sweep_high") + c("5m_sweep_high") + c("15m_sweep_high")).rolling(win, min_periods=1).sum()
+        out[f"seq_sweep_low_count_{win}"] = (c("1m_sweep_low") + c("5m_sweep_low") + c("15m_sweep_low")).rolling(win, min_periods=1).sum()
+        out[f"seq_reject_high_count_{win}"] = (c("1m_sweep_reject_high") + c("5m_sweep_reject_high") + c("15m_sweep_reject_high")).rolling(win, min_periods=1).sum()
+        out[f"seq_reject_low_count_{win}"] = (c("1m_sweep_reject_low") + c("5m_sweep_reject_low") + c("15m_sweep_reject_low")).rolling(win, min_periods=1).sum()
+        out[f"seq_sweep_pressure_bias_{win}"] = out[f"seq_sweep_high_count_{win}"] - out[f"seq_sweep_low_count_{win}"]
+        out[f"seq_rejection_reversal_bias_{win}"] = out[f"seq_reject_low_count_{win}"] - out[f"seq_reject_high_count_{win}"]
+        out[f"seq_both_sides_swept_{win}"] = ((out[f"seq_sweep_high_count_{win}"] > 0) & (out[f"seq_sweep_low_count_{win}"] > 0)).astype(int)
+
+        # Displacement memory
+        out[f"seq_bull_displacement_count_{win}"] = (c("1m_bull_displacement") + c("5m_bull_displacement") + c("15m_bull_displacement")).rolling(win, min_periods=1).sum()
+        out[f"seq_bear_displacement_count_{win}"] = (c("1m_bear_displacement") + c("5m_bear_displacement") + c("15m_bear_displacement")).rolling(win, min_periods=1).sum()
+        out[f"seq_displacement_bias_{win}"] = out[f"seq_bull_displacement_count_{win}"] - out[f"seq_bear_displacement_count_{win}"]
+        out[f"seq_expansion_count_{win}"] = (c("1m_expansion_bar") + c("5m_expansion_bar") + c("15m_expansion_bar")).rolling(win, min_periods=1).sum()
+
+        # Compression memory
+        out[f"seq_compression_count_{win}"] = (c("1m_is_compressed") + c("5m_is_compressed") + c("15m_is_compressed")).rolling(win, min_periods=1).sum()
+        out[f"seq_breakout_after_compression_count_{win}"] = (
+            c("1m_breakout_after_compression") + c("5m_breakout_after_compression") + c("15m_breakout_after_compression")
+        ).rolling(win, min_periods=1).sum()
+
+    out["seq_market_pressure_bias_20"] = (
+        c("seq_structure_break_bias_20") +
+        c("seq_displacement_bias_20") +
+        c("seq_rejection_reversal_bias_20")
+    )
+
+    out["seq_market_activity_score_20"] = (
+        c("seq_expansion_count_20") +
+        c("seq_sweep_high_count_20") + c("seq_sweep_low_count_20") +
+        c("seq_bos_up_count_20") + c("seq_bos_down_count_20")
+    )
+
+    return out
+
+
+# ========== DO NOT TRADE INTELLIGENCE ==========
+def add_do_not_trade_intelligence_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds uncertainty/chop/conflict features. These are model inputs, not hard filters.
+
+    Purpose:
+      - lets LightGBM learn when market conditions are low-quality
+      - improves NO_TRADE recognition without removing existing trade labels
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    bull_context = (
+        c("structure_bull_context_score") +
+        c("ob_bull_context_score") +
+        c("fvg_bull_context_score") +
+        c("liquidity_interaction_bull_score") +
+        c("seq_bull_displacement_count_20") +
+        c("htf_liquidity_reject_low_score") +
+        c("session_liquidity_reject_low_score")
+    )
+    bear_context = (
+        c("structure_bear_context_score") +
+        c("ob_bear_context_score") +
+        c("fvg_bear_context_score") +
+        c("liquidity_interaction_bear_score") +
+        c("seq_bear_displacement_count_20") +
+        c("htf_liquidity_reject_high_score") +
+        c("session_liquidity_reject_high_score")
+    )
+
+    out["dnt_bull_context_total"] = bull_context
+    out["dnt_bear_context_total"] = bear_context
+    out["dnt_context_abs_diff"] = (bull_context - bear_context).abs()
+    out["dnt_context_conflict_score"] = (np.minimum(bull_context, bear_context) / (np.maximum(bull_context, bear_context) + EPS)).clip(0, 1)
+
+    out["dnt_structure_flip_count_20"] = c("seq_structure_instability_20")
+    out["dnt_both_sides_swept_20"] = c("seq_both_sides_swept_20")
+    out["dnt_both_sides_swept_50"] = c("seq_both_sides_swept_50")
+    out["dnt_weak_or_mixed_trend"] = c("mixed_or_weak_trend")
+    out["dnt_choppy_alignment"] = c("adx_choppy_alignment_score")
+
+    # Weak displacement while signals exist = often poor continuation quality.
+    out["dnt_weak_displacement_environment"] = (
+        (c("seq_bull_displacement_count_20") + c("seq_bear_displacement_count_20") <= 1) &
+        (c("seq_market_activity_score_20") > 3)
+    ).astype(int)
+
+    # Compression with no breakout = wait condition, not necessarily directional edge.
+    out["dnt_unresolved_compression"] = (
+        (c("seq_compression_count_20") >= 10) &
+        (c("seq_breakout_after_compression_count_20") == 0)
+    ).astype(int)
+
+    out["dnt_conflicting_structure_liquidity"] = (
+        ((c("structure_bull_context_score") > c("structure_bear_context_score")) & (c("advanced_liquidity_pressure_bias") < 0)) |
+        ((c("structure_bear_context_score") > c("structure_bull_context_score")) & (c("advanced_liquidity_pressure_bias") > 0))
+    ).astype(int)
+
+    out["dnt_uncertainty_score"] = (
+        out["dnt_context_conflict_score"] * 3.0 +
+        (out["dnt_structure_flip_count_20"] / 5.0).clip(0, 3) +
+        out["dnt_both_sides_swept_20"] * 1.5 +
+        out["dnt_weak_or_mixed_trend"] * 1.0 +
+        (out["dnt_choppy_alignment"] / 3.0).clip(0, 1.5) +
+        out["dnt_weak_displacement_environment"] * 1.0 +
+        out["dnt_unresolved_compression"] * 1.5 +
+        out["dnt_conflicting_structure_liquidity"] * 1.5
+    )
+
+    out["dnt_high_uncertainty_regime"] = (out["dnt_uncertainty_score"] >= 4.0).astype(int)
+    out["dnt_low_quality_trade_environment"] = (
+        (out["dnt_high_uncertainty_regime"] == 1) |
+        ((out["dnt_context_abs_diff"] <= DO_NOT_TRADE_CONFLICT_THRESHOLD) & (out["dnt_context_conflict_score"] > 0.55))
+    ).astype(int)
+
+    return out
+
+
+
+
+
+# ========== NEXT-STAGE ENRICHMENT FEATURES (LIVE COMPATIBILITY) ==========
+def add_late_entry_exhaustion_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """
+    Adds late-entry and exhaustion context without changing existing logic.
+
+    Purpose:
+      - helps the model detect when price is already stretched after a move
+      - gives RSI/ADX/ATR/MA features more timing context
+      - uses only current and historical candles/indicators
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    close = out["close"] if "close" in out.columns else c(f"{prefix}_ma20")
+    high = out["high"] if "high" in out.columns else close
+    low = out["low"] if "low" in out.columns else close
+
+    atr_col = f"{prefix}_atr14"
+    if atr_col in out.columns:
+        atr_safe = c(atr_col).replace(0, np.nan)
+    else:
+        atr_safe = c(f"{prefix}_range").rolling(14, min_periods=5).mean().replace(0, np.nan)
+
+    rsi = c(f"{prefix}_rsi14", 50.0)
+    adx = c(f"{prefix}_adx14", 0.0)
+    ma_fast = c(f"{prefix}_ma10", close)
+    ma_slow = c(f"{prefix}_ma20", close)
+
+    # ----- RSI / ADX / ATR behavior change -----
+    out[f"{prefix}_rsi_slope_1"] = rsi.diff(1).fillna(0.0)
+    out[f"{prefix}_rsi_slope_3"] = rsi.diff(3).fillna(0.0)
+    out[f"{prefix}_rsi_slope_5"] = rsi.diff(5).fillna(0.0)
+    out[f"{prefix}_rsi_overbought_falling"] = ((rsi >= RSI_EXHAUSTION_HIGH) & (out[f"{prefix}_rsi_slope_3"] < 0)).astype(int)
+    out[f"{prefix}_rsi_oversold_rising"] = ((rsi <= RSI_EXHAUSTION_LOW) & (out[f"{prefix}_rsi_slope_3"] > 0)).astype(int)
+    out[f"{prefix}_rsi_midline_reject_bull"] = ((rsi.shift(1) < 50) & (rsi >= 50) & (out[f"{prefix}_rsi_slope_3"] > 0)).astype(int)
+    out[f"{prefix}_rsi_midline_reject_bear"] = ((rsi.shift(1) > 50) & (rsi <= 50) & (out[f"{prefix}_rsi_slope_3"] < 0)).astype(int)
+
+    out[f"{prefix}_adx_slope_1"] = adx.diff(1).fillna(0.0)
+    out[f"{prefix}_adx_slope_3"] = adx.diff(3).fillna(0.0)
+    out[f"{prefix}_adx_rising_3"] = (out[f"{prefix}_adx_slope_3"] > 0).astype(int)
+    out[f"{prefix}_adx_falling_3"] = (out[f"{prefix}_adx_slope_3"] < 0).astype(int)
+    out[f"{prefix}_adx_weak_and_falling"] = ((adx < ADX_WEAK_LEVEL) & (out[f"{prefix}_adx_slope_3"] < 0)).astype(int)
+
+    out[f"{prefix}_atr_slope_1"] = atr_safe.diff(1).fillna(0.0)
+    out[f"{prefix}_atr_slope_3"] = atr_safe.diff(3).fillna(0.0)
+    out[f"{prefix}_atr_ratio_20"] = atr_safe / (atr_safe.rolling(20, min_periods=5).mean() + EPS)
+    out[f"{prefix}_atr_ratio_50"] = atr_safe / (atr_safe.rolling(50, min_periods=10).mean() + EPS)
+    out[f"{prefix}_atr_expanding"] = ((out[f"{prefix}_atr_ratio_20"] > 1.15) & (out[f"{prefix}_atr_slope_3"] > 0)).astype(int)
+    out[f"{prefix}_atr_exhausted"] = ((out[f"{prefix}_atr_ratio_50"] > 1.50) & (out[f"{prefix}_atr_slope_3"] <= 0)).astype(int)
+
+    # ----- Price stretch from recent high/low and moving averages -----
+    out[f"{prefix}_ema_fast_slow_distance_atr"] = (ma_fast - ma_slow) / (atr_safe + EPS)
+    out[f"{prefix}_close_distance_ma10_atr"] = (close - ma_fast) / (atr_safe + EPS)
+    out[f"{prefix}_close_distance_ma20_atr"] = (close - ma_slow) / (atr_safe + EPS)
+    out[f"{prefix}_abs_close_distance_ma20_atr"] = out[f"{prefix}_close_distance_ma20_atr"].abs()
+
+    for win in EXHAUSTION_LOOKBACKS:
+        recent_high = high.rolling(win, min_periods=max(3, win // 3)).max()
+        recent_low = low.rolling(win, min_periods=max(3, win // 3)).min()
+        recent_range = (recent_high - recent_low).replace(0, np.nan)
+
+        out[f"{prefix}_move_from_recent_low_atr_{win}"] = (close - recent_low) / (atr_safe + EPS)
+        out[f"{prefix}_move_from_recent_high_atr_{win}"] = (recent_high - close) / (atr_safe + EPS)
+        out[f"{prefix}_position_in_recent_range_{win}"] = ((close - recent_low) / (recent_range + EPS)).clip(0, 1)
+        out[f"{prefix}_near_recent_high_exhaustion_{win}"] = (
+            (out[f"{prefix}_move_from_recent_low_atr_{win}"] >= LATE_ENTRY_ATR_STRETCH_THRESHOLD) &
+            (out[f"{prefix}_position_in_recent_range_{win}"] >= 0.80)
+        ).astype(int)
+        out[f"{prefix}_near_recent_low_exhaustion_{win}"] = (
+            (out[f"{prefix}_move_from_recent_high_atr_{win}"] >= LATE_ENTRY_ATR_STRETCH_THRESHOLD) &
+            (out[f"{prefix}_position_in_recent_range_{win}"] <= 0.20)
+        ).astype(int)
+
+    out[f"{prefix}_bull_late_entry_risk"] = (
+        out.get(f"{prefix}_near_recent_high_exhaustion_20", 0) +
+        out[f"{prefix}_rsi_overbought_falling"] +
+        out[f"{prefix}_atr_exhausted"] +
+        (out[f"{prefix}_close_distance_ma20_atr"] > LATE_ENTRY_ATR_STRETCH_THRESHOLD).astype(int)
+    )
+    out[f"{prefix}_bear_late_entry_risk"] = (
+        out.get(f"{prefix}_near_recent_low_exhaustion_20", 0) +
+        out[f"{prefix}_rsi_oversold_rising"] +
+        out[f"{prefix}_atr_exhausted"] +
+        (out[f"{prefix}_close_distance_ma20_atr"] < -LATE_ENTRY_ATR_STRETCH_THRESHOLD).astype(int)
+    )
+
+    return out
+
+def add_ema_trend_quality_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """
+    Adds trend-quality features based on the existing MA10/MA20 columns.
+
+    Purpose:
+      - helps the model separate clean trend alignment from weak/mixed MA context
+      - keeps the existing MA features unchanged
+      - no future leakage: rolling windows use current/past rows only
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    close = out["close"] if "close" in out.columns else c(f"{prefix}_ma20")
+    ma_fast = c(f"{prefix}_ma10", close)
+    ma_slow = c(f"{prefix}_ma20", close)
+    if f"{prefix}_atr14" in out.columns:
+        atr_safe = c(f"{prefix}_atr14").replace(0, np.nan)
+    else:
+        atr_safe = c(f"{prefix}_range", 0.0).rolling(14, min_periods=5).mean().replace(0, np.nan)
+
+    out[f"{prefix}_ema_fast_slope_pct_1"] = ma_fast.pct_change(1).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out[f"{prefix}_ema_slow_slope_pct_1"] = ma_slow.pct_change(1).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out[f"{prefix}_ema_fast_slope_atr_3"] = ma_fast.diff(3).fillna(0.0) / (atr_safe + EPS)
+    out[f"{prefix}_ema_slow_slope_atr_3"] = ma_slow.diff(3).fillna(0.0) / (atr_safe + EPS)
+    out[f"{prefix}_ema_fast_slope_atr_10"] = ma_fast.diff(10).fillna(0.0) / (atr_safe + EPS)
+    out[f"{prefix}_ema_slow_slope_atr_10"] = ma_slow.diff(10).fillna(0.0) / (atr_safe + EPS)
+
+    out[f"{prefix}_ema_stack_bull"] = ((close > ma_fast) & (ma_fast > ma_slow)).astype(int)
+    out[f"{prefix}_ema_stack_bear"] = ((close < ma_fast) & (ma_fast < ma_slow)).astype(int)
+    out[f"{prefix}_ema_stack_mixed"] = ((out[f"{prefix}_ema_stack_bull"] == 0) & (out[f"{prefix}_ema_stack_bear"] == 0)).astype(int)
+
+    out[f"{prefix}_ema_trend_quality_bull"] = (
+        out[f"{prefix}_ema_stack_bull"] *
+        (out[f"{prefix}_ema_fast_slope_atr_3"] > 0).astype(int) *
+        (out[f"{prefix}_ema_slow_slope_atr_3"] > 0).astype(int) *
+        (c(f"{prefix}_adx_slope_3", 0.0) >= 0).astype(int)
+    )
+    out[f"{prefix}_ema_trend_quality_bear"] = (
+        out[f"{prefix}_ema_stack_bear"] *
+        (out[f"{prefix}_ema_fast_slope_atr_3"] < 0).astype(int) *
+        (out[f"{prefix}_ema_slow_slope_atr_3"] < 0).astype(int) *
+        (c(f"{prefix}_adx_slope_3", 0.0) >= 0).astype(int)
+    )
+
+    for win in EMA_TREND_WINDOWS:
+        out[f"{prefix}_ema_bull_persistence_{win}"] = out[f"{prefix}_ema_stack_bull"].rolling(win, min_periods=1).mean()
+        out[f"{prefix}_ema_bear_persistence_{win}"] = out[f"{prefix}_ema_stack_bear"].rolling(win, min_periods=1).mean()
+        out[f"{prefix}_ema_mixed_persistence_{win}"] = out[f"{prefix}_ema_stack_mixed"].rolling(win, min_periods=1).mean()
+
+    out[f"{prefix}_ema_trend_quality_score"] = (
+        out[f"{prefix}_ema_bull_persistence_20"] - out[f"{prefix}_ema_bear_persistence_20"]
+    ) * (1.0 - out[f"{prefix}_ema_mixed_persistence_20"].clip(0, 1))
+
+    return out
+
+def add_market_cleanliness_chop_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """
+    Adds market cleanliness / chop features.
+
+    Purpose:
+      - helps the model avoid messy candle overlap and random two-sided movement
+      - complements ICT features by measuring whether price action is clean enough
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    close = out["close"] if "close" in out.columns else c(f"{prefix}_ma20")
+    high = out["high"] if "high" in out.columns else close
+    low = out["low"] if "low" in out.columns else close
+    rng = c(f"{prefix}_range")
+    body_abs = c(f"{prefix}_body").abs()
+    upper_wick = c(f"{prefix}_upper_wick")
+    lower_wick = c(f"{prefix}_lower_wick")
+
+    out[f"{prefix}_wick_noise_ratio"] = (upper_wick + lower_wick) / (rng + EPS)
+    out[f"{prefix}_body_cleanliness_ratio"] = body_abs / (rng + EPS)
+    out[f"{prefix}_directional_candle"] = np.sign(c(f"{prefix}_body")).fillna(0.0)
+
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    overlap = (np.minimum(high, prev_high) - np.maximum(low, prev_low)).clip(lower=0)
+    prev_range = (prev_high - prev_low).replace(0, np.nan)
+    out[f"{prefix}_candle_overlap_ratio"] = overlap / (np.minimum(rng.replace(0, np.nan), prev_range) + EPS)
+    out[f"{prefix}_inside_prev_candle"] = ((high <= prev_high) & (low >= prev_low)).astype(int)
+    out[f"{prefix}_outside_prev_candle"] = ((high >= prev_high) & (low <= prev_low)).astype(int)
+
+    for win in CLEANLINESS_WINDOWS:
+        net_move = (close - close.shift(win)).abs()
+        path_move = close.diff().abs().rolling(win, min_periods=max(2, win // 3)).sum()
+        out[f"{prefix}_efficiency_ratio_{win}"] = (net_move / (path_move + EPS)).clip(0, 1)
+        out[f"{prefix}_directional_consistency_{win}"] = out[f"{prefix}_directional_candle"].rolling(win, min_periods=1).mean().abs()
+        out[f"{prefix}_overlap_mean_{win}"] = out[f"{prefix}_candle_overlap_ratio"].rolling(win, min_periods=1).mean()
+        out[f"{prefix}_wick_noise_mean_{win}"] = out[f"{prefix}_wick_noise_ratio"].rolling(win, min_periods=1).mean()
+        out[f"{prefix}_inside_candle_count_{win}"] = out[f"{prefix}_inside_prev_candle"].rolling(win, min_periods=1).sum()
+
+    out[f"{prefix}_range_chop_score"] = (
+        (1.0 - out[f"{prefix}_efficiency_ratio_20"].fillna(0.0)) * 2.0 +
+        out[f"{prefix}_overlap_mean_20"].fillna(0.0) +
+        out[f"{prefix}_wick_noise_mean_20"].fillna(0.0) +
+        (1.0 - out[f"{prefix}_directional_consistency_20"].fillna(0.0))
+    )
+    out[f"{prefix}_clean_trend_score"] = (
+        out[f"{prefix}_efficiency_ratio_20"].fillna(0.0) +
+        out[f"{prefix}_directional_consistency_20"].fillna(0.0) +
+        out.get(f"{prefix}_ema_bull_persistence_20", 0) +
+        out.get(f"{prefix}_ema_bear_persistence_20", 0)
+    ) / 4.0
+
+    return out
+
+def add_ict_disrespect_invalidation_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds features that describe when ICT-style context is being disrespected.
+
+    Purpose:
+      - lets the model learn when ICT signals are conflicting, weak, late, or failing
+      - does not hardcode a no-trade rule; these are only features
+      - uses current/past rows only
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    # Directional ICT context already built earlier.
+    bull_ict = (
+        c("structure_bull_context_score") +
+        c("ob_bull_context_score") +
+        c("fvg_bull_context_score") +
+        c("liquidity_interaction_bull_score") +
+        c("session_liquidity_reject_low_score") +
+        c("htf_liquidity_reject_low_score")
+    )
+    bear_ict = (
+        c("structure_bear_context_score") +
+        c("ob_bear_context_score") +
+        c("fvg_bear_context_score") +
+        c("liquidity_interaction_bear_score") +
+        c("session_liquidity_reject_high_score") +
+        c("htf_liquidity_reject_high_score")
+    )
+
+    bull_nonict = (
+        c("rsi_adx_bull_context") +
+        c("triple_bull_alignment") +
+        c("bull_bias_strength") +
+        c("1m_ema_trend_quality_bull") +
+        c("5m_ema_trend_quality_bull") +
+        c("15m_ema_trend_quality_bull") +
+        c("seq_bull_displacement_count_20")
+    )
+    bear_nonict = (
+        c("rsi_adx_bear_context") +
+        c("triple_bear_alignment") +
+        c("bear_bias_strength") +
+        c("1m_ema_trend_quality_bear") +
+        c("5m_ema_trend_quality_bear") +
+        c("15m_ema_trend_quality_bear") +
+        c("seq_bear_displacement_count_20")
+    )
+
+    out["ict_bull_context_total"] = bull_ict
+    out["ict_bear_context_total"] = bear_ict
+    out["nonict_bull_confirmation_total"] = bull_nonict
+    out["nonict_bear_confirmation_total"] = bear_nonict
+    out["ict_direction_bias"] = bull_ict - bear_ict
+    out["nonict_direction_bias"] = bull_nonict - bear_nonict
+    out["ict_nonict_bias_agreement"] = (np.sign(out["ict_direction_bias"]) == np.sign(out["nonict_direction_bias"])).astype(int)
+    out["ict_nonict_bias_conflict"] = (
+        (out["ict_direction_bias"].abs() > 0) &
+        (out["nonict_direction_bias"].abs() > 0) &
+        (np.sign(out["ict_direction_bias"]) != np.sign(out["nonict_direction_bias"]))
+    ).astype(int)
+
+    out["ict_bull_without_nonict_confirmation"] = ((bull_ict > bear_ict) & (bull_nonict <= bear_nonict)).astype(int)
+    out["ict_bear_without_nonict_confirmation"] = ((bear_ict > bull_ict) & (bear_nonict <= bull_nonict)).astype(int)
+
+    # Specific failure-style conditions.
+    out["bos_without_displacement"] = (
+        ((c("seq_bos_up_count_10") + c("seq_bos_down_count_10")) > 0) &
+        ((c("seq_bull_displacement_count_10") + c("seq_bear_displacement_count_10")) == 0)
+    ).astype(int)
+
+    out["fvg_without_continuation"] = (
+        ((c("fvg_bull_context_score") + c("fvg_bear_context_score")) > 0) &
+        (c("seq_expansion_count_10") == 0)
+    ).astype(int)
+
+    out["sweep_without_reaction"] = (
+        ((c("sweep_high_context_score") + c("sweep_low_context_score") + c("session_liquidity_sweep_high_score") + c("session_liquidity_sweep_low_score")) > 0) &
+        ((c("sweep_reject_high_context_score") + c("sweep_reject_low_context_score") + c("session_liquidity_reject_high_score") + c("session_liquidity_reject_low_score")) == 0)
+    ).astype(int)
+
+    out["structure_flip_after_ict_signal"] = (
+        (c("seq_structure_instability_20") > 0) &
+        ((bull_ict + bear_ict) > 0)
+    ).astype(int)
+
+    out["ict_signal_in_chop"] = (
+        ((bull_ict + bear_ict) > 0) &
+        ((c("1m_range_chop_score") > 2.5) | (c("dnt_low_quality_trade_environment") == 1))
+    ).astype(int)
+
+    out["ict_late_bull_risk"] = ((bull_ict > bear_ict) & (c("1m_bull_late_entry_risk") >= 2)).astype(int)
+    out["ict_late_bear_risk"] = ((bear_ict > bull_ict) & (c("1m_bear_late_entry_risk") >= 2)).astype(int)
+
+    out["ict_disrespect_score"] = (
+        out["ict_nonict_bias_conflict"] * 2.0 +
+        out["ict_bull_without_nonict_confirmation"] +
+        out["ict_bear_without_nonict_confirmation"] +
+        out["bos_without_displacement"] +
+        out["fvg_without_continuation"] +
+        out["sweep_without_reaction"] +
+        out["structure_flip_after_ict_signal"] +
+        out["ict_signal_in_chop"] +
+        out["ict_late_bull_risk"] +
+        out["ict_late_bear_risk"]
+    )
+
+    for win in ICT_DISRESPECT_WINDOWS:
+        out[f"ict_disrespect_score_mean_{win}"] = out["ict_disrespect_score"].rolling(win, min_periods=1).mean()
+        out[f"ict_disrespect_event_count_{win}"] = (out["ict_disrespect_score"] > 0).astype(int).rolling(win, min_periods=1).sum()
+        out[f"ict_nonict_conflict_count_{win}"] = out["ict_nonict_bias_conflict"].rolling(win, min_periods=1).sum()
+
+    out["ict_currently_disrespected"] = (out["ict_disrespect_score_mean_10"] >= 2.0).astype(int)
+
+    return out
+
+def add_signal_freshness_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds signal freshness/staleness features on top of existing bars_since columns.
+
+    Purpose:
+      - lets the model separate fresh signals from stale/late signals
+      - keeps current features unchanged
+      - uses only current/past rows
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 9999.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    def min_existing(names: list[str], default: float = 9999.0) -> pd.Series:
+        frames = [c(name, default) for name in names if name in out.columns]
+        if not frames:
+            return pd.Series(default, index=out.index, dtype="float64")
+        return pd.concat(frames, axis=1).min(axis=1).fillna(default)
+
+    def freshness_from_bars(bars: pd.Series, half_life: float = 8.0, max_age: float = 9998.0) -> pd.Series:
+        bars = bars.clip(lower=0, upper=max_age)
+        freshness = np.exp(-bars / max(half_life, EPS))
+        return pd.Series(np.where(bars >= max_age, 0.0, freshness), index=out.index)
+
+    high_sweep_bars = min_existing([
+        "1m_bars_since_sweep_high", "5m_bars_since_sweep_high", "15m_bars_since_sweep_high",
+        "bars_since_swept_prev_daily_high", "bars_since_swept_prev_weekly_high", "bars_since_swept_prev_monthly_high",
+        "bars_since_swept_prev_asia_session_high", "bars_since_swept_prev_london_session_high", "bars_since_swept_prev_ny_session_high",
+    ])
+    low_sweep_bars = min_existing([
+        "1m_bars_since_sweep_low", "5m_bars_since_sweep_low", "15m_bars_since_sweep_low",
+        "bars_since_swept_prev_daily_low", "bars_since_swept_prev_weekly_low", "bars_since_swept_prev_monthly_low",
+        "bars_since_swept_prev_asia_session_low", "bars_since_swept_prev_london_session_low", "bars_since_swept_prev_ny_session_low",
+    ])
+    high_reject_bars = min_existing([
+        "1m_bars_since_sweep_reject_high", "5m_bars_since_sweep_reject_high", "15m_bars_since_sweep_reject_high",
+        "bars_since_reject_prev_daily_high", "bars_since_reject_prev_weekly_high", "bars_since_reject_prev_monthly_high",
+        "bars_since_reject_prev_asia_session_high", "bars_since_reject_prev_london_session_high", "bars_since_reject_prev_ny_session_high",
+    ])
+    low_reject_bars = min_existing([
+        "1m_bars_since_sweep_reject_low", "5m_bars_since_sweep_reject_low", "15m_bars_since_sweep_reject_low",
+        "bars_since_reject_prev_daily_low", "bars_since_reject_prev_weekly_low", "bars_since_reject_prev_monthly_low",
+        "bars_since_reject_prev_asia_session_low", "bars_since_reject_prev_london_session_low", "bars_since_reject_prev_ny_session_low",
+    ])
+    bull_disp_bars = min_existing([
+        "1m_bars_since_bull_displacement", "5m_bars_since_bull_displacement", "15m_bars_since_bull_displacement"
+    ])
+    bear_disp_bars = min_existing([
+        "1m_bars_since_bear_displacement", "5m_bars_since_bear_displacement", "15m_bars_since_bear_displacement"
+    ])
+    bos_bars = min_existing([
+        "1m_bars_since_bos_up", "1m_bars_since_bos_down", "5m_bars_since_bos_up", "5m_bars_since_bos_down", "15m_bars_since_bos_up", "15m_bars_since_bos_down"
+    ])
+    choch_bars = min_existing([
+        "1m_bars_since_choch_up", "1m_bars_since_choch_down", "5m_bars_since_choch_up", "5m_bars_since_choch_down", "15m_bars_since_choch_up", "15m_bars_since_choch_down"
+    ])
+
+    # Create missing displacement bars-since from displacement flags if not already available.
+    def bars_since_signal(signal: pd.Series, default: float = 9999.0) -> pd.Series:
+        last_idx = pd.Series(np.where(signal.astype(bool), np.arange(len(out)), np.nan), index=out.index).ffill()
+        bar_idx = pd.Series(np.arange(len(out)), index=out.index)
+        return (bar_idx - last_idx).fillna(default)
+
+    for prefix in ["1m", "5m", "15m"]:
+        if f"{prefix}_bull_displacement" in out.columns and f"{prefix}_bars_since_bull_displacement" not in out.columns:
+            out[f"{prefix}_bars_since_bull_displacement"] = bars_since_signal(out[f"{prefix}_bull_displacement"])
+        if f"{prefix}_bear_displacement" in out.columns and f"{prefix}_bars_since_bear_displacement" not in out.columns:
+            out[f"{prefix}_bars_since_bear_displacement"] = bars_since_signal(out[f"{prefix}_bear_displacement"])
+
+    bull_disp_bars = min_existing(["1m_bars_since_bull_displacement", "5m_bars_since_bull_displacement", "15m_bars_since_bull_displacement"])
+    bear_disp_bars = min_existing(["1m_bars_since_bear_displacement", "5m_bars_since_bear_displacement", "15m_bars_since_bear_displacement"])
+
+    out["fresh_bars_since_high_sweep_any"] = high_sweep_bars
+    out["fresh_bars_since_low_sweep_any"] = low_sweep_bars
+    out["fresh_bars_since_high_rejection_any"] = high_reject_bars
+    out["fresh_bars_since_low_rejection_any"] = low_reject_bars
+    out["fresh_bars_since_bull_displacement_any"] = bull_disp_bars
+    out["fresh_bars_since_bear_displacement_any"] = bear_disp_bars
+    out["fresh_bars_since_structure_break_any"] = bos_bars
+    out["fresh_bars_since_choch_any"] = choch_bars
+
+    out["fresh_high_sweep_score"] = freshness_from_bars(high_sweep_bars)
+    out["fresh_low_sweep_score"] = freshness_from_bars(low_sweep_bars)
+    out["fresh_high_rejection_score"] = freshness_from_bars(high_reject_bars)
+    out["fresh_low_rejection_score"] = freshness_from_bars(low_reject_bars)
+    out["fresh_bull_displacement_score"] = freshness_from_bars(bull_disp_bars)
+    out["fresh_bear_displacement_score"] = freshness_from_bars(bear_disp_bars)
+    out["fresh_structure_break_score"] = freshness_from_bars(bos_bars, half_life=12.0)
+    out["fresh_choch_score"] = freshness_from_bars(choch_bars, half_life=12.0)
+
+    out["fresh_bullish_signal_score"] = (
+        out["fresh_low_rejection_score"] + out["fresh_bull_displacement_score"] +
+        (c("seq_bos_up_count_10", 0.0) > 0).astype(int) * out["fresh_structure_break_score"]
+    )
+    out["fresh_bearish_signal_score"] = (
+        out["fresh_high_rejection_score"] + out["fresh_bear_displacement_score"] +
+        (c("seq_bos_down_count_10", 0.0) > 0).astype(int) * out["fresh_structure_break_score"]
+    )
+    out["fresh_signal_bias"] = out["fresh_bullish_signal_score"] - out["fresh_bearish_signal_score"]
+    out["fresh_signal_abs"] = out["fresh_signal_bias"].abs()
+    out["stale_signal_risk_score"] = (
+        (out["fresh_structure_break_score"] < 0.15).astype(int) +
+        (out["fresh_bull_displacement_score"] < 0.15).astype(int) +
+        (out["fresh_bear_displacement_score"] < 0.15).astype(int)
+    )
+
+    return out
+
+def add_market_regime_score_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds compact regime scores using existing trend, volatility, compression, and chop features."""
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    adx_score = (c("adx_trend_alignment_score") / 3.0).clip(0, 1)
+    choppy_score = (c("adx_choppy_alignment_score") / 3.0).clip(0, 1)
+    trend_alignment = c("triple_trend_alignment")
+    bull_alignment = c("triple_bull_alignment")
+    bear_alignment = c("triple_bear_alignment")
+    clean_trend = ((c("1m_clean_trend_score") + c("5m_clean_trend_score") + c("15m_clean_trend_score")) / 3.0).clip(0, 1)
+    chop_raw = ((c("1m_range_chop_score") + c("5m_range_chop_score") + c("15m_range_chop_score")) / 9.0).clip(0, 1)
+    compression = ((c("1m_is_compressed") + c("5m_is_compressed") + c("15m_is_compressed")) / 3.0).clip(0, 1)
+    expansion = ((c("1m_expansion_bar") + c("5m_expansion_bar") + c("15m_expansion_bar")) / 3.0).clip(0, 1)
+    volatility = c("volatility_zscore").clip(-3, 3)
+
+    out["regime_trend_score"] = (
+        adx_score * 0.35 + trend_alignment * 0.20 + clean_trend * 0.25 +
+        ((bull_alignment + bear_alignment) > 0).astype(int) * 0.20
+    ).clip(0, 1)
+    out["regime_chop_score"] = (
+        choppy_score * 0.35 + chop_raw * 0.35 + compression * 0.20 + c("dnt_context_conflict_score") * 0.10
+    ).clip(0, 1)
+    out["regime_expansion_score"] = (
+        expansion * 0.35 + ((volatility + 3.0) / 6.0) * 0.25 +
+        (c("seq_expansion_count_20") / 20.0).clip(0, 1) * 0.20 +
+        (c("seq_displacement_bias_20").abs() / 10.0).clip(0, 1) * 0.20
+    ).clip(0, 1)
+    out["regime_compression_score"] = (
+        compression * 0.45 + (c("seq_compression_count_20") / 20.0).clip(0, 1) * 0.35 +
+        (c("1m_bb_width_compression_ratio") < 0.75).astype(int) * 0.20
+    ).clip(0, 1)
+
+    out["regime_bull_trend_score"] = out["regime_trend_score"] * (
+        (bull_alignment > 0).astype(int) + (c("di_direction_alignment_score") > 0).astype(int)
+    ).clip(0, 1)
+    out["regime_bear_trend_score"] = out["regime_trend_score"] * (
+        (bear_alignment > 0).astype(int) + (c("di_direction_alignment_score") < 0).astype(int)
+    ).clip(0, 1)
+    out["regime_directional_bias"] = out["regime_bull_trend_score"] - out["regime_bear_trend_score"]
+    out["regime_tradeable_score"] = (
+        out["regime_trend_score"] * 0.45 + out["regime_expansion_score"] * 0.25 +
+        (1.0 - out["regime_chop_score"]) * 0.20 + (1.0 - c("dnt_context_conflict_score")) * 0.10
+    ).clip(0, 1)
+
+    return out
+
+def add_execution_quality_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds entry location and late-entry quality scores without changing labels or execution logic."""
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    def proximity_from_dist(name: str, scale: float = 1000.0) -> pd.Series:
+        dist = c(name, 10.0).abs().clip(lower=0)
+        return (1.0 / (1.0 + dist * scale)).clip(0, 1)
+
+    close_pos = c("1m_close_pos_in_range", 0.5).clip(0, 1)
+    candle_eff = c("1m_candle_efficiency", 0.0).clip(0, 1)
+    bull_zone_prox = pd.concat([
+        proximity_from_dist("1m_dist_to_bull_ob"), proximity_from_dist("1m_dist_to_bull_fvg"),
+        proximity_from_dist("dist_to_prev_daily_low"), proximity_from_dist("dist_to_prev_weekly_low"), proximity_from_dist("dist_to_prev_monthly_low"),
+        c("session_low_proximity_max", 0.0).clip(0, 1)
+    ], axis=1).max(axis=1)
+    bear_zone_prox = pd.concat([
+        proximity_from_dist("1m_dist_to_bear_ob"), proximity_from_dist("1m_dist_to_bear_fvg"),
+        proximity_from_dist("dist_to_prev_daily_high"), proximity_from_dist("dist_to_prev_weekly_high"), proximity_from_dist("dist_to_prev_monthly_high"),
+        c("session_high_proximity_max", 0.0).clip(0, 1)
+    ], axis=1).max(axis=1)
+
+    daily_mid_dist = (c("daily_position", 0.5) - 0.5).abs() * 2.0
+    prev_daily_mid_dist = (c("prev_daily_range_position", 0.5) - 0.5).abs() * 2.0
+    prev_weekly_mid_dist = (c("prev_weekly_range_position", 0.5) - 0.5).abs() * 2.0
+
+    out["exec_bull_zone_proximity_score"] = bull_zone_prox
+    out["exec_bear_zone_proximity_score"] = bear_zone_prox
+    out["exec_distance_from_daily_mid_score"] = daily_mid_dist.clip(0, 1)
+    out["exec_distance_from_prev_daily_mid_score"] = prev_daily_mid_dist.clip(0, 1)
+    out["exec_distance_from_prev_weekly_mid_score"] = prev_weekly_mid_dist.clip(0, 1)
+    out["exec_bull_location_quality"] = (
+        bull_zone_prox * 0.35 + c("fresh_low_rejection_score") * 0.25 +
+        (1.0 - c("1m_bull_late_entry_risk", 0.0).clip(0, 3) / 3.0) * 0.25 +
+        close_pos * candle_eff * 0.15
+    ).clip(0, 1)
+    out["exec_bear_location_quality"] = (
+        bear_zone_prox * 0.35 + c("fresh_high_rejection_score") * 0.25 +
+        (1.0 - c("1m_bear_late_entry_risk", 0.0).clip(0, 3) / 3.0) * 0.25 +
+        (1.0 - close_pos) * candle_eff * 0.15
+    ).clip(0, 1)
+    out["exec_location_quality_bias"] = out["exec_bull_location_quality"] - out["exec_bear_location_quality"]
+    out["exec_late_entry_risk_score"] = (
+        c("1m_bull_late_entry_risk", 0.0) + c("1m_bear_late_entry_risk", 0.0) +
+        c("ict_late_bull_risk", 0.0) + c("ict_late_bear_risk", 0.0)
+    ).clip(0, 6) / 6.0
+    out["exec_entry_quality_score"] = (
+        out[["exec_bull_location_quality", "exec_bear_location_quality"]].max(axis=1) * 0.55 +
+        c("regime_tradeable_score", 0.0) * 0.30 +
+        (1.0 - out["exec_late_entry_risk_score"]) * 0.15
+    ).clip(0, 1)
+
+    return out
+
+def add_liquidity_hierarchy_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds compact liquidity hierarchy and nearest-liquidity priority features."""
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    def prox(name: str, scale: float = 1000.0) -> pd.Series:
+        return (1.0 / (1.0 + c(name, 10.0).abs().clip(lower=0) * scale)).clip(0, 1)
+
+    daily_high_p = prox("dist_to_prev_daily_high")
+    daily_low_p = prox("dist_to_prev_daily_low")
+    weekly_high_p = prox("dist_to_prev_weekly_high")
+    weekly_low_p = prox("dist_to_prev_weekly_low")
+    monthly_high_p = prox("dist_to_prev_monthly_high")
+    monthly_low_p = prox("dist_to_prev_monthly_low")
+    session_high_p = c("session_high_proximity_max", 0.0).clip(0, 1)
+    session_low_p = c("session_low_proximity_max", 0.0).clip(0, 1)
+
+    high_stack = pd.concat([monthly_high_p * 3.0, weekly_high_p * 2.0, daily_high_p * 1.5, session_high_p], axis=1)
+    low_stack = pd.concat([monthly_low_p * 3.0, weekly_low_p * 2.0, daily_low_p * 1.5, session_low_p], axis=1)
+
+    out["liq_high_priority_score"] = high_stack.max(axis=1)
+    out["liq_low_priority_score"] = low_stack.max(axis=1)
+    out["liq_priority_bias"] = out["liq_low_priority_score"] - out["liq_high_priority_score"]
+    out["liq_htf_confluence_score"] = (
+        c("near_prev_monthly_high") + c("near_prev_monthly_low") +
+        c("near_prev_weekly_high") + c("near_prev_weekly_low") +
+        c("near_prev_daily_high") + c("near_prev_daily_low") +
+        c("daily_weekly_liquidity_confluence_high") + c("daily_weekly_liquidity_confluence_low")
+    )
+    out["liq_sweep_reaction_quality"] = (
+        c("htf_liquidity_reject_high_score") + c("htf_liquidity_reject_low_score") +
+        c("session_liquidity_reject_high_score") + c("session_liquidity_reject_low_score") +
+        c("strong_sweep_reject_high_context_score") + c("strong_sweep_reject_low_context_score")
+    )
+    out["liq_nearest_side"] = np.where(out["liq_low_priority_score"] > out["liq_high_priority_score"], 1, np.where(out["liq_high_priority_score"] > out["liq_low_priority_score"], -1, 0))
+    out["liq_nearest_priority_abs"] = out[["liq_high_priority_score", "liq_low_priority_score"]].max(axis=1)
+    out["liq_meaningful_pool_near"] = (out["liq_nearest_priority_abs"] >= 0.5).astype(int)
+    out["liq_reversal_context_quality"] = (
+        (out["liq_low_priority_score"] * c("fresh_low_rejection_score")) -
+        (out["liq_high_priority_score"] * c("fresh_high_rejection_score"))
+    )
+
+    return out
+
+def add_trade_avoidance_score_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds final no-trade/low-quality setup scores as model inputs only."""
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    out["avoid_conflicting_signal_score"] = (
+        c("dnt_context_conflict_score") * 2.0 +
+        c("ict_nonict_bias_conflict") +
+        c("dnt_conflicting_structure_liquidity") +
+        c("structure_flip_after_ict_signal")
+    ).clip(0, 5) / 5.0
+    out["avoid_low_regime_quality_score"] = (
+        c("regime_chop_score") * 0.40 +
+        c("regime_compression_score") * 0.25 +
+        (1.0 - c("regime_tradeable_score")) * 0.25 +
+        c("dnt_unresolved_compression") * 0.10
+    ).clip(0, 1)
+    out["avoid_stale_or_late_score"] = (
+        c("stale_signal_risk_score") / 3.0 * 0.45 +
+        c("exec_late_entry_risk_score") * 0.35 +
+        (c("fresh_signal_abs") < 0.10).astype(int) * 0.20
+    ).clip(0, 1)
+    out["avoid_liquidity_noise_score"] = (
+        (1.0 - c("liq_nearest_priority_abs").clip(0, 1)) * 0.40 +
+        (c("liq_htf_confluence_score") == 0).astype(int) * 0.25 +
+        (c("liq_sweep_reaction_quality") == 0).astype(int) * 0.20 +
+        c("sweep_without_reaction") * 0.15
+    ).clip(0, 1)
+    out["no_trade_risk_score"] = (
+        out["avoid_conflicting_signal_score"] * 0.30 +
+        out["avoid_low_regime_quality_score"] * 0.25 +
+        out["avoid_stale_or_late_score"] * 0.25 +
+        out["avoid_liquidity_noise_score"] * 0.20
+    ).clip(0, 1)
+    out["low_quality_setup_score"] = (
+        c("dnt_uncertainty_score").clip(0, 8) / 8.0 * 0.35 +
+        out["no_trade_risk_score"] * 0.45 +
+        (1.0 - c("exec_entry_quality_score")) * 0.20
+    ).clip(0, 1)
+    out["high_quality_setup_score"] = (
+        c("exec_entry_quality_score") * 0.45 +
+        c("regime_tradeable_score") * 0.30 +
+        c("liq_nearest_priority_abs").clip(0, 1) * 0.15 +
+        (1.0 - out["no_trade_risk_score"]) * 0.10
+    ).clip(0, 1)
+
+    return out
+
+
+def get_previous_completed_htf_level(symbol: str, timeframe: int, label: str) -> Optional[dict]:
+    """
+    Fetch the previous completed D1/W1/MN1 candle directly from MT5.
+    This preserves the meaning of prev_daily/weekly/monthly levels without
+    requiring 60k+ M1 candles in the live feature builder.
+    """
+    try:
+        rates = get_latest_rates(symbol, timeframe, count=3).sort_values("time")
+        if len(rates) < 2:
+            return None
+        prev = rates.iloc[-2]  # last row is current forming HTF candle; -2 is completed
+        high = float(prev["high"])
+        low = float(prev["low"])
+        if not np.isfinite(high) or not np.isfinite(low) or high <= 0 or low <= 0:
+            return None
+        return {
+            "label": label,
+            "time": prev["time"],
+            "high": high,
+            "low": low,
+            "mid": (high + low) / 2.0,
+            "range": max(high - low, np.nan),
+        }
+    except Exception as exc:
+        log_message(f"Direct HTF fetch failed for {label}: {exc}")
+        return None
+
+
+def fetch_direct_htf_levels(symbol: str) -> Optional[dict]:
+    levels = {
+        "daily": get_previous_completed_htf_level(symbol, mt5.TIMEFRAME_D1, "daily"),
+        "weekly": get_previous_completed_htf_level(symbol, mt5.TIMEFRAME_W1, "weekly"),
+        "monthly": get_previous_completed_htf_level(symbol, mt5.TIMEFRAME_MN1, "monthly"),
+    }
+    if any(v is None for v in levels.values()):
+        return None
+    return levels
+
+
+def add_htf_liquidity_level_features_live(df: pd.DataFrame, raw_1m: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """
+    Live-optimized HTF liquidity builder.
+
+    Feature names and formulas are kept compatible with training. The only
+    change is where prev_daily/weekly/monthly high-low levels come from:
+      - Direct MT5 D1/W1/MN1 candles for the previous completed HTF levels.
+      - Recent M1 candles are still used for sweep/reject/reclaim detection.
+
+    If direct HTF fetch is disabled or unavailable, it falls back to the old
+    M1-derived method.
+    """
+    if not USE_DIRECT_HTF_LEVELS:
+        return add_htf_liquidity_level_features(df, raw_1m)
+
+    levels = fetch_direct_htf_levels(symbol)
+    if levels is None:
+        if DIRECT_HTF_FALLBACK_TO_M1:
+            log_message("Direct HTF levels unavailable; falling back to old M1-derived HTF logic.")
+            return add_htf_liquidity_level_features(df, raw_1m)
+        raise RuntimeError("Direct HTF levels unavailable and fallback is disabled.")
+
+    out = df.copy()
+    raw = raw_1m.reindex(out.index).copy()
+    if not isinstance(raw.index, pd.DatetimeIndex):
+        raise ValueError("raw_1m must have a DatetimeIndex before adding HTF liquidity features.")
+
+    high = raw["high"].astype(float)
+    low = raw["low"].astype(float)
+    close = raw["close"].astype(float)
+
+    if "1m_atr14" in out.columns:
+        near_distance = (out["1m_atr14"].abs() * HTF_LIQUIDITY_NEAR_ATR_MULTIPLIER).fillna(
+            close * HTF_LIQUIDITY_NEAR_PCT_FALLBACK
+        )
+    else:
+        near_distance = close * HTF_LIQUIDITY_NEAR_PCT_FALLBACK
+
+    def bars_since(signal: pd.Series) -> pd.Series:
+        last_idx = pd.Series(np.where(signal.astype(bool), np.arange(len(out)), np.nan), index=out.index).ffill()
+        bar_idx = pd.Series(np.arange(len(out)), index=out.index)
+        return (bar_idx - last_idx).fillna(HTF_LIQUIDITY_NO_SWEEP_AGE)
+
+    for name in ("daily", "weekly", "monthly"):
+        lv = levels[name]
+        prev_high = pd.Series(float(lv["high"]), index=out.index, dtype="float64")
+        prev_low = pd.Series(float(lv["low"]), index=out.index, dtype="float64")
+        prev_mid = pd.Series(float(lv["mid"]), index=out.index, dtype="float64")
+        prev_range = (prev_high - prev_low).replace(0, np.nan)
+
+        out[f"prev_{name}_high"] = prev_high
+        out[f"prev_{name}_low"] = prev_low
+        out[f"prev_{name}_mid"] = prev_mid
+        out[f"prev_{name}_range"] = prev_range
+
+        out[f"dist_to_prev_{name}_high"] = (prev_high - close) / (close + EPS)
+        out[f"dist_to_prev_{name}_low"] = (close - prev_low) / (close + EPS)
+        out[f"abs_dist_to_prev_{name}_high"] = (prev_high - close).abs() / (close + EPS)
+        out[f"abs_dist_to_prev_{name}_low"] = (close - prev_low).abs() / (close + EPS)
+
+        out[f"near_prev_{name}_high"] = ((prev_high - close).abs() <= near_distance).astype(int)
+        out[f"near_prev_{name}_low"] = ((close - prev_low).abs() <= near_distance).astype(int)
+
+        out[f"closed_above_prev_{name}_high"] = (close > prev_high).astype(int)
+        out[f"closed_below_prev_{name}_low"] = (close < prev_low).astype(int)
+        out[f"inside_prev_{name}_range"] = ((close <= prev_high) & (close >= prev_low)).astype(int)
+
+        out[f"swept_prev_{name}_high"] = (high > prev_high).astype(int)
+        out[f"swept_prev_{name}_low"] = (low < prev_low).astype(int)
+        out[f"reject_prev_{name}_high"] = ((out[f"swept_prev_{name}_high"] == 1) & (close < prev_high)).astype(int)
+        out[f"reject_prev_{name}_low"] = ((out[f"swept_prev_{name}_low"] == 1) & (close > prev_low)).astype(int)
+        out[f"reclaim_prev_{name}_high"] = ((out[f"swept_prev_{name}_high"] == 1) & (close > prev_high)).astype(int)
+        out[f"reclaim_prev_{name}_low"] = ((out[f"swept_prev_{name}_low"] == 1) & (close < prev_low)).astype(int)
+
+        out[f"prev_{name}_range_position"] = ((close - prev_low) / (prev_range + EPS)).clip(lower=-1, upper=2)
+        out[f"above_prev_{name}_mid"] = (close > prev_mid).astype(int)
+        out[f"below_prev_{name}_mid"] = (close < prev_mid).astype(int)
+        out[f"prev_{name}_premium_discount"] = np.where(close > prev_mid, 1, np.where(close < prev_mid, -1, 0))
+
+        out[f"prev_{name}_high_sweep_depth"] = np.where(out[f"swept_prev_{name}_high"] == 1, (high - prev_high).clip(lower=0), 0.0)
+        out[f"prev_{name}_low_sweep_depth"] = np.where(out[f"swept_prev_{name}_low"] == 1, (prev_low - low).clip(lower=0), 0.0)
+        out[f"prev_{name}_high_sweep_depth_pct"] = out[f"prev_{name}_high_sweep_depth"] / (close + EPS)
+        out[f"prev_{name}_low_sweep_depth_pct"] = out[f"prev_{name}_low_sweep_depth"] / (close + EPS)
+
+        out[f"bars_since_swept_prev_{name}_high"] = bars_since(out[f"swept_prev_{name}_high"])
+        out[f"bars_since_swept_prev_{name}_low"] = bars_since(out[f"swept_prev_{name}_low"])
+        out[f"bars_since_reject_prev_{name}_high"] = bars_since(out[f"reject_prev_{name}_high"])
+        out[f"bars_since_reject_prev_{name}_low"] = bars_since(out[f"reject_prev_{name}_low"])
+
+        out[f"recent_swept_prev_{name}_high"] = (out[f"bars_since_swept_prev_{name}_high"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_swept_prev_{name}_low"] = (out[f"bars_since_swept_prev_{name}_low"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_reject_prev_{name}_high"] = (out[f"bars_since_reject_prev_{name}_high"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+        out[f"recent_reject_prev_{name}_low"] = (out[f"bars_since_reject_prev_{name}_low"] <= HTF_LIQUIDITY_RECENT_WINDOW).astype(int)
+
+    out["htf_liquidity_near_high_score"] = out[["near_prev_daily_high", "near_prev_weekly_high", "near_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_near_low_score"] = out[["near_prev_daily_low", "near_prev_weekly_low", "near_prev_monthly_low"]].sum(axis=1)
+    out["htf_liquidity_sweep_high_score"] = out[["recent_swept_prev_daily_high", "recent_swept_prev_weekly_high", "recent_swept_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_sweep_low_score"] = out[["recent_swept_prev_daily_low", "recent_swept_prev_weekly_low", "recent_swept_prev_monthly_low"]].sum(axis=1)
+    out["htf_liquidity_reject_high_score"] = out[["recent_reject_prev_daily_high", "recent_reject_prev_weekly_high", "recent_reject_prev_monthly_high"]].sum(axis=1)
+    out["htf_liquidity_reject_low_score"] = out[["recent_reject_prev_daily_low", "recent_reject_prev_weekly_low", "recent_reject_prev_monthly_low"]].sum(axis=1)
+    out["htf_liquidity_reversal_bias"] = out["htf_liquidity_reject_low_score"] - out["htf_liquidity_reject_high_score"]
+    out["htf_liquidity_continuation_bias"] = out["htf_liquidity_sweep_high_score"] - out["htf_liquidity_sweep_low_score"]
+    out["daily_weekly_liquidity_confluence_high"] = ((out["near_prev_daily_high"] == 1) & (out["near_prev_weekly_high"] == 1)).astype(int)
+    out["daily_weekly_liquidity_confluence_low"] = ((out["near_prev_daily_low"] == 1) & (out["near_prev_weekly_low"] == 1)).astype(int)
+
+    out["direct_htf_levels_used"] = 1
+    return out
+
+def fetch_raw_timeframes(symbol: str, m1_count: int = LIVE_M1_HISTORY_BARS) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     rates_1m = get_latest_rates(symbol, mt5.TIMEFRAME_M1, count=m1_count)
     rates_5m = get_latest_rates(symbol, mt5.TIMEFRAME_M5, count=max(500, math.ceil(m1_count / 5) + 240))
     rates_15m = get_latest_rates(symbol, mt5.TIMEFRAME_M15, count=max(500, math.ceil(m1_count / 15) + 240))
@@ -905,11 +2919,53 @@ def prefixed_features_only(df_source: pd.DataFrame, prefix: str) -> pd.DataFrame
 
 
 def make_feature_frame(symbol: str) -> pd.DataFrame:
-    df_1m_raw, df_5m_raw, df_15m_raw = fetch_raw_timeframes(symbol, m1_count=1200)
-    df_1m = add_fvg_features(add_order_block_features(add_fractal_structure_features(create_features(df_1m_raw, "1m", use_rsi=True, use_atr=True, use_adx=True), "1m"), "1m"), "1m")
+    df_1m_raw, df_5m_raw, df_15m_raw = fetch_raw_timeframes(symbol, m1_count=LIVE_M1_HISTORY_BARS)
+    df_1m = create_features(df_1m_raw, "1m", use_rsi=True, use_atr=True, use_adx=True)
+    df_5m = create_features(df_5m_raw, "5m", use_rsi=True, use_atr=False, use_adx=True)
+    df_15m = create_features(df_15m_raw, "15m", use_rsi=False, use_atr=False, use_adx=True)
+
+    # Behavior-flow upgrade features must be calculated on each native timeframe
+    # before safe backward merging, matching the upgraded dataset builder.
+    df_1m = add_displacement_expansion_features(df_1m, "1m")
+    df_5m = add_displacement_expansion_features(df_5m, "5m")
+    df_15m = add_displacement_expansion_features(df_15m, "15m")
+
+    df_1m = add_compression_expansion_features(df_1m, "1m")
+    df_5m = add_compression_expansion_features(df_5m, "5m")
+    df_15m = add_compression_expansion_features(df_15m, "15m")
+
+    # Next-stage enrichment on native timeframes.
+    # These mirror the enriched dataset builder and do not alter execution/order logic.
+    df_1m = add_late_entry_exhaustion_features(df_1m, "1m")
+    df_5m = add_late_entry_exhaustion_features(df_5m, "5m")
+    df_15m = add_late_entry_exhaustion_features(df_15m, "15m")
+
+    df_1m = add_ema_trend_quality_features(df_1m, "1m")
+    df_5m = add_ema_trend_quality_features(df_5m, "5m")
+    df_15m = add_ema_trend_quality_features(df_15m, "15m")
+
+    df_1m = add_market_cleanliness_chop_features(df_1m, "1m")
+    df_5m = add_market_cleanliness_chop_features(df_5m, "5m")
+    df_15m = add_market_cleanliness_chop_features(df_15m, "15m")
+
+    # Match dataset builder feature order: displacement/compression/enrichment -> sweep -> structure -> OB -> FVG -> entry-zone boundaries.
+    df_1m = add_liquidity_sweep_features(df_1m, "1m")
+    df_5m = add_liquidity_sweep_features(df_5m, "5m")
+    df_15m = add_liquidity_sweep_features(df_15m, "15m")
+
+    df_1m = add_fractal_structure_features(df_1m, "1m")
+    df_5m = add_fractal_structure_features(df_5m, "5m")
+    df_15m = add_fractal_structure_features(df_15m, "15m")
+
+    df_1m = add_order_block_features(df_1m, "1m")
+    df_5m = add_order_block_features(df_5m, "5m")
+    df_15m = add_order_block_features(df_15m, "15m")
+
+    df_1m = add_fvg_features(df_1m, "1m")
+    df_5m = add_fvg_features(df_5m, "5m")
+    df_15m = add_fvg_features(df_15m, "15m")
+
     df_1m = add_entry_zone_price_features(df_1m, "1m")
-    df_5m = add_fvg_features(add_order_block_features(add_fractal_structure_features(create_features(df_5m_raw, "5m", use_rsi=True, use_atr=False, use_adx=True), "5m"), "5m"), "5m")
-    df_15m = add_fvg_features(add_order_block_features(add_fractal_structure_features(create_features(df_15m_raw, "15m", use_rsi=False, use_atr=False, use_adx=True), "15m"), "15m"), "15m")
     df = prefixed_features_only(df_1m, "1m")
     df = pd.merge_asof(df.sort_index(), prefixed_features_only(df_5m, "5m").sort_index(), left_index=True, right_index=True, direction="backward")
     df = pd.merge_asof(df.sort_index(), prefixed_features_only(df_15m, "15m").sort_index(), left_index=True, right_index=True, direction="backward")
@@ -943,6 +2999,105 @@ def make_feature_frame(symbol: str) -> pd.DataFrame:
     cross["structure_triple_bull_alignment"] = (cross["structure_direction_alignment"] == 3).astype(int)
     cross["structure_triple_bear_alignment"] = (cross["structure_direction_alignment"] == -3).astype(int)
     cross["structure_recent_break_score"] = (df["1m_recent_bos_up"] - df["1m_recent_bos_down"] + df["5m_recent_bos_up"] - df["5m_recent_bos_down"] + df["15m_recent_bos_up"] - df["15m_recent_bos_down"] + df["1m_recent_choch_up"] - df["1m_recent_choch_down"] + df["5m_recent_choch_up"] - df["5m_recent_choch_down"] + df["15m_recent_choch_up"] - df["15m_recent_choch_down"])
+
+# ========== LIQUIDITY SWEEP / REJECTION ALIGNMENT FEATURES ==========
+    cross["sweep_high_context_score"] = (
+        df["1m_recent_sweep_high"] +
+        df["5m_recent_sweep_high"] +
+        df["15m_recent_sweep_high"]
+    )
+    
+    cross["sweep_low_context_score"] = (
+        df["1m_recent_sweep_low"] +
+        df["5m_recent_sweep_low"] +
+        df["15m_recent_sweep_low"]
+    )
+    
+    cross["sweep_reject_high_context_score"] = (
+        df["1m_recent_sweep_reject_high"] +
+        df["5m_recent_sweep_reject_high"] +
+        df["15m_recent_sweep_reject_high"]
+    )
+    
+    cross["sweep_reject_low_context_score"] = (
+        df["1m_recent_sweep_reject_low"] +
+        df["5m_recent_sweep_reject_low"] +
+        df["15m_recent_sweep_reject_low"]
+    )
+    
+    cross["strong_sweep_reject_high_context_score"] = (
+        df["1m_recent_strong_sweep_reject_high"] +
+        df["5m_recent_strong_sweep_reject_high"] +
+        df["15m_recent_strong_sweep_reject_high"]
+    )
+    
+    cross["strong_sweep_reject_low_context_score"] = (
+        df["1m_recent_strong_sweep_reject_low"] +
+        df["5m_recent_strong_sweep_reject_low"] +
+        df["15m_recent_strong_sweep_reject_low"]
+    )
+    
+    cross["sweep_reversal_context_score"] = (
+        df["1m_sweep_reversal_bias"] +
+        df["5m_sweep_reversal_bias"] +
+        df["15m_sweep_reversal_bias"]
+    )
+    
+    cross["strong_sweep_reversal_context_score"] = (
+        df["1m_strong_sweep_reversal_bias"] +
+        df["5m_strong_sweep_reversal_bias"] +
+        df["15m_strong_sweep_reversal_bias"]
+    )
+    
+    cross["sweep_continuation_context_score"] = (
+        df["1m_sweep_continuation_bias"] +
+        df["5m_sweep_continuation_bias"] +
+        df["15m_sweep_continuation_bias"]
+    )
+    
+    cross["sweep_high_atr_strength_sum"] = (
+        df["1m_sweep_high_atr_strength"] +
+        df["5m_sweep_high_atr_strength"] +
+        df["15m_sweep_high_atr_strength"]
+    )
+    
+    cross["sweep_low_atr_strength_sum"] = (
+        df["1m_sweep_low_atr_strength"] +
+        df["5m_sweep_low_atr_strength"] +
+        df["15m_sweep_low_atr_strength"]
+    )
+    
+    cross["sweep_high_wick_rejection_strength_sum"] = (
+        df["1m_sweep_high_wick_rejection_strength"] +
+        df["5m_sweep_high_wick_rejection_strength"] +
+        df["15m_sweep_high_wick_rejection_strength"]
+    )
+    
+    cross["sweep_low_wick_rejection_strength_sum"] = (
+        df["1m_sweep_low_wick_rejection_strength"] +
+        df["5m_sweep_low_wick_rejection_strength"] +
+        df["15m_sweep_low_wick_rejection_strength"]
+    )
+    
+    cross["htf_sweep_high_ltf_reject"] = (
+        ((df["15m_recent_sweep_high"] == 1) | (df["5m_recent_sweep_high"] == 1)) &
+        (df["1m_recent_sweep_reject_high"] == 1)
+    ).astype(int)
+    
+    cross["htf_sweep_low_ltf_reject"] = (
+        ((df["15m_recent_sweep_low"] == 1) | (df["5m_recent_sweep_low"] == 1)) &
+        (df["1m_recent_sweep_reject_low"] == 1)
+    ).astype(int)
+    
+    cross["htf_sweep_high_ltf_strong_reject"] = (
+        ((df["15m_recent_sweep_high"] == 1) | (df["5m_recent_sweep_high"] == 1)) &
+        (df["1m_recent_strong_sweep_reject_high"] == 1)
+    ).astype(int)
+    
+    cross["htf_sweep_low_ltf_strong_reject"] = (
+        ((df["15m_recent_sweep_low"] == 1) | (df["5m_recent_sweep_low"] == 1)) &
+        (df["1m_recent_strong_sweep_reject_low"] == 1)
+    ).astype(int)
     cross["htf_ltf_bull_ob_alignment"] = ((df["15m_inside_bull_ob"] == 1) & (df["1m_inside_bull_ob"] == 1)).astype(int)
     cross["htf_ltf_bear_ob_alignment"] = ((df["15m_inside_bear_ob"] == 1) & (df["1m_inside_bear_ob"] == 1)).astype(int)
     cross["htf_ltf_bull_breaker_alignment"] = ((df["15m_inside_bear_breaker"] == 1) & (df["1m_inside_bull_ob"] == 1)).astype(int)
@@ -979,6 +3134,26 @@ def make_feature_frame(symbol: str) -> pd.DataFrame:
     cross["mixed_or_weak_trend"] = ((cross["adx_trend_alignment_score"] <= 1) | (cross["ma_bull_alignment_score"].between(1, 2))).astype(int)
     meta = pd.DataFrame({"entry_price": df_1m_raw["close"], "spread_points": df_1m_raw["spread_points"]}, index=df_1m_raw.index)
     out = pd.concat([df, cross, meta], axis=1).replace([np.inf, -np.inf], np.nan)
+
+    # Match dataset builder context/session/liquidity feature order.
+    out = add_must_have_context_features(out, df_1m_raw)
+    out = add_htf_liquidity_level_features_live(out, df_1m_raw, symbol)
+    out = add_session_liquidity_features(out, df_1m_raw)
+    out = add_advanced_liquidity_interaction_features(out)
+
+    # Final behavior-flow layers that need merged multi-timeframe/context columns.
+    out = add_multitimeframe_sequence_awareness_features(out)
+    out = add_do_not_trade_intelligence_features(out)
+
+    # Next-stage enrichment layers from the latest training pipeline.
+    # These are model-input features only; they do not change order execution.
+    out = add_ict_disrespect_invalidation_features(out)
+    out = add_signal_freshness_features(out)
+    out = add_market_regime_score_features(out)
+    out = add_execution_quality_features(out)
+    out = add_liquidity_hierarchy_features(out)
+    out = add_trade_avoidance_score_features(out)
+
     nearest_cols = [c for c in out.columns if c.startswith("1m_nearest_")]
     if nearest_cols:
         out[nearest_cols] = out[nearest_cols].fillna(0.0)
@@ -1011,6 +3186,38 @@ def build_live_feature_row(feature_list: list[str], symbol: str) -> tuple[pd.Dat
         "structure_bull_context_score", "structure_bear_context_score", "structure_reversal_warning", "structure_direction_alignment", "structure_triple_bull_alignment", "structure_triple_bear_alignment", "structure_recent_break_score",
         "15m_inside_bull_ob", "15m_inside_bear_ob", "1m_inside_bull_ob", "1m_inside_bear_ob", "htf_ltf_bull_ob_alignment", "htf_ltf_bear_ob_alignment", "ob_bull_context_score", "ob_bear_context_score",
         "15m_inside_bull_fvg", "15m_inside_bear_fvg", "1m_inside_bull_fvg", "1m_inside_bear_fvg", "htf_ltf_bull_fvg_alignment", "htf_ltf_bear_fvg_alignment", "fvg_bull_context_score", "fvg_bear_context_score", "ob_fvg_bull_confluence", "ob_fvg_bear_confluence",
+        "prev_daily_high", "prev_daily_low", "prev_weekly_high", "prev_weekly_low", "prev_monthly_high", "prev_monthly_low",
+        "dist_to_prev_daily_high", "dist_to_prev_daily_low", "dist_to_prev_weekly_high", "dist_to_prev_weekly_low",
+        "near_prev_daily_high", "near_prev_daily_low", "near_prev_weekly_high", "near_prev_weekly_low", "near_prev_monthly_high", "near_prev_monthly_low",
+        "swept_prev_daily_high", "swept_prev_daily_low", "reject_prev_daily_high", "reject_prev_daily_low",
+        "htf_liquidity_near_high_score", "htf_liquidity_near_low_score", "htf_liquidity_sweep_high_score", "htf_liquidity_sweep_low_score", "htf_liquidity_reject_high_score", "htf_liquidity_reject_low_score", "htf_liquidity_reversal_bias",
+        "prev_daily_range_position", "prev_weekly_range_position", "prev_monthly_range_position",
+        "session_high_near_any", "session_low_near_any",
+        "session_high_reject_recent_any", "session_low_reject_recent_any",
+        "session_high_bearish_structure", "session_low_bullish_structure",
+        "session_high_reject_bearish_structure", "session_low_reject_bullish_structure",
+        "liquidity_interaction_reversal_bias", "killzone_liquidity_reversal_bias",
+        "liquidity_interaction_bull_score", "liquidity_interaction_bear_score", "liquidity_interaction_score_diff",
+        "session_sweep_decay_bias", "session_reject_decay_bias",
+        "weighted_session_reversal_strength_bias", "entry_zone_liquidity_fusion_bias",
+        "advanced_liquidity_pressure_bias", "structure_bias_normalized",
+        "session_high_proximity_max", "session_low_proximity_max",
+        "session_rejection_strength_bias_cont",
+        "15m_displacement_pressure", "5m_displacement_pressure", "1m_displacement_pressure",
+        "15m_signed_body_atr_ratio", "5m_signed_body_atr_ratio", "1m_signed_body_atr_ratio",
+        "15m_candle_efficiency", "5m_candle_efficiency", "1m_candle_efficiency",
+        "seq_displacement_bias_50", "seq_structure_break_bias_50", "seq_sweep_pressure_bias_50",
+        "seq_market_pressure_bias_20", "seq_market_activity_score_20",
+        "seq_compression_count_50", "seq_breakout_after_compression_count_50",
+        "dnt_uncertainty_score", "dnt_context_conflict_score", "dnt_context_abs_diff",
+        "dnt_high_uncertainty_regime", "dnt_low_quality_trade_environment",
+        "dnt_weak_displacement_environment", "dnt_unresolved_compression",
+        "fresh_signal_bias", "fresh_signal_abs", "fresh_bullish_signal_score", "fresh_bearish_signal_score",
+        "regime_trend_score", "regime_chop_score", "regime_expansion_score", "regime_compression_score", "regime_tradeable_score",
+        "exec_entry_quality_score", "exec_bull_location_quality", "exec_bear_location_quality", "exec_late_entry_risk_score",
+        "liq_nearest_priority_abs", "liq_high_priority_score", "liq_low_priority_score", "liq_priority_bias", "liq_htf_confluence_score",
+        "avoid_conflicting_signal_score", "avoid_low_regime_quality_score", "avoid_liquidity_noise_score",
+        "no_trade_risk_score", "high_quality_setup_score", "low_quality_setup_score", "avoid_stale_or_late_score",
     ]
     debug = {c: (None if c not in row.index or pd.isna(row[c]) else float(row[c])) for c in debug_cols}
     return live_row, bar_time, debug
@@ -1261,7 +3468,14 @@ def calc_target_price_by_pnl(symbol: str, order_type: int, volume: float, entry_
 
 
 def compute_live_sl_tp(symbol: str, order_type: int, volume: float, entry_price: float, balance: float) -> tuple[float, Optional[float], float, float]:
-    risk_usd = balance * STOP_LOSS_ACCOUNT_FRACTION
+    if SL_MODE == "fixed_usd":
+        # Flat dollar risk -- balance is ignored for SL sizing in this mode.
+        risk_usd = float(STOP_LOSS_FIXED_USD)
+    elif SL_MODE == "percentage":
+        # Original behaviour: risk a fraction of current account balance.
+        risk_usd = balance * STOP_LOSS_ACCOUNT_FRACTION
+    else:
+        raise ValueError(f"Unknown SL_MODE '{SL_MODE}'. Must be 'percentage' or 'fixed_usd'.")
     reward_usd = risk_usd * RISK_REWARD_RATIO
     sl_price = calc_target_price_by_pnl(symbol, order_type, volume, entry_price, -risk_usd)
     tp_price = calc_target_price_by_pnl(symbol, order_type, volume, entry_price, reward_usd) if USE_TAKE_PROFIT else None
@@ -1392,6 +3606,245 @@ def close_position(position, reason: str = "timeout") -> Optional[dict]:
     return result._asdict()
 
 
+def sltp_modify_retcode_ok(retcode) -> bool:
+    """Return True when MT5 accepted an SL/TP modification."""
+    return retcode in (
+        mt5.TRADE_RETCODE_DONE,
+        getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", mt5.TRADE_RETCODE_DONE),
+    )
+
+
+def current_position_exit_price(position, tick) -> float:
+    """
+    Price used to estimate live exit/progress:
+    - BUY closes at bid
+    - SELL closes at ask
+    """
+    if position.type == mt5.POSITION_TYPE_BUY:
+        return float(tick.bid)
+    return float(tick.ask)
+
+
+def trailing_progress(position, exit_price: float) -> Optional[float]:
+    """
+    Returns current progress toward TP as a 0..1+ ratio.
+    Requires an actual TP because the trigger is defined as 50% of TP distance.
+    """
+    entry = float(position.price_open)
+    tp = float(position.tp or 0.0)
+    if tp <= 0 or entry <= 0:
+        return None
+
+    if position.type == mt5.POSITION_TYPE_BUY:
+        target_distance = tp - entry
+        moved_distance = exit_price - entry
+    elif position.type == mt5.POSITION_TYPE_SELL:
+        target_distance = entry - tp
+        moved_distance = entry - exit_price
+    else:
+        return None
+
+    if target_distance <= 0:
+        return None
+    return moved_distance / target_distance
+
+
+def desired_trailing_sl(position, symbol_info) -> Optional[float]:
+    """
+    SL target after trailing triggers:
+    - BUY: entry + 10% of TP distance
+    - SELL: entry - 10% of TP distance
+    This locks a small profit beyond breakeven while leaving room to breathe.
+    """
+    entry = float(position.price_open)
+    tp = float(position.tp or 0.0)
+    if tp <= 0 or entry <= 0:
+        return None
+
+    if position.type == mt5.POSITION_TYPE_BUY:
+        target_distance = tp - entry
+        if target_distance <= 0:
+            return None
+        return normalize_price(symbol_info, entry + target_distance * TRAIL_LOCK_PROGRESS)
+
+    if position.type == mt5.POSITION_TYPE_SELL:
+        target_distance = entry - tp
+        if target_distance <= 0:
+            return None
+        return normalize_price(symbol_info, entry - target_distance * TRAIL_LOCK_PROGRESS)
+
+    return None
+
+
+def sl_is_improvement(position, new_sl: float, symbol_info) -> bool:
+    """
+    Only tighten risk. Never loosen an existing SL.
+    """
+    current_sl = float(position.sl or 0.0)
+    min_step = max(float(symbol_info.point) * TRAIL_MIN_UPDATE_POINTS, 0.0)
+
+    if position.type == mt5.POSITION_TYPE_BUY:
+        return current_sl <= 0 or new_sl > current_sl + min_step
+    if position.type == mt5.POSITION_TYPE_SELL:
+        return current_sl <= 0 or new_sl < current_sl - min_step
+    return False
+
+
+def clamp_sl_to_broker_limits(position, desired_sl: float, symbol_info, tick) -> Optional[float]:
+    """
+    Keeps the modified SL valid relative to current bid/ask and broker stop level.
+    If the desired SL is too close to price, clamp it to the nearest valid level.
+    """
+    point = float(symbol_info.point or 0.0)
+    if point <= 0:
+        return None
+
+    stops_level_points = max(
+        float(getattr(symbol_info, "trade_stops_level", 0) or 0),
+        float(TRAIL_MIN_UPDATE_POINTS),
+    )
+    min_distance = stops_level_points * point
+
+    if position.type == mt5.POSITION_TYPE_BUY:
+        max_valid_sl = float(tick.bid) - min_distance
+        if max_valid_sl <= float(position.price_open):
+            return None
+        return normalize_price(symbol_info, min(desired_sl, max_valid_sl))
+
+    if position.type == mt5.POSITION_TYPE_SELL:
+        min_valid_sl = float(tick.ask) + min_distance
+        if min_valid_sl >= float(position.price_open):
+            return None
+        return normalize_price(symbol_info, max(desired_sl, min_valid_sl))
+
+    return None
+
+
+def modify_position_sl(position, new_sl: float, reason: str = "trail_50_lock_10") -> Optional[dict]:
+    """
+    Modify only SL while preserving the current TP.
+    """
+    request = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "position": position.ticket,
+        "symbol": position.symbol,
+        "sl": float(new_sl),
+        "tp": float(position.tp or 0.0),
+        "magic": MAGIC_NUMBER,
+        # NOTE: "comment" is NOT supported for TRADE_ACTION_SLTP and causes
+        # error (-2, 'Invalid "comment" argument'). Removed intentionally.
+    }
+
+    if DRY_RUN:
+        return {"retcode": "DRY_RUN_TRAIL", "request": request}
+
+    result = mt5.order_send(request)
+    if result is None:
+        log_message(f"Trailing SL modify failed: {mt5.last_error()} | ticket={position.ticket}")
+        return None
+    if not sltp_modify_retcode_ok(result.retcode):
+        log_message(f"Trailing SL rejected: retcode={result.retcode} comment={result.comment} ticket={position.ticket}")
+        return None
+    return result._asdict()
+
+
+def manage_trailing_stoploss(symbol: str, state: dict) -> None:
+    """
+    Fast execution-layer trailing stop manager.
+
+    Trigger:
+      current progress toward TP >= TRAIL_TRIGGER_PROGRESS
+
+    Action:
+      move SL to TRAIL_LOCK_PROGRESS beyond breakeven.
+
+    This is intentionally independent from candle/model checks so it can run
+    multiple times between M1 signal evaluations.
+    """
+    if not TRAILING_SL_ENABLED or DRY_RUN:
+        return
+
+    positions = get_open_positions(symbol, MAGIC_NUMBER)
+    if not positions:
+        return
+
+    symbol_info = ensure_symbol(symbol)
+    tick = get_symbol_tick(symbol)
+    trailing_state = state.setdefault("trailing_stoploss", {})
+
+    for pos in positions:
+        if pos.type not in (mt5.POSITION_TYPE_BUY, mt5.POSITION_TYPE_SELL):
+            continue
+
+        exit_price = current_position_exit_price(pos, tick)
+        progress = trailing_progress(pos, exit_price)
+        if progress is None:
+            if TRAIL_LOG_SKIPPED:
+                log_message(f"Trailing skipped: no valid TP distance | ticket={pos.ticket}")
+            continue
+
+        if progress < TRAIL_TRIGGER_PROGRESS:
+            continue
+
+        wanted_sl = desired_trailing_sl(pos, symbol_info)
+        if wanted_sl is None:
+            continue
+
+        valid_sl = clamp_sl_to_broker_limits(pos, wanted_sl, symbol_info, tick)
+        if valid_sl is None:
+            if TRAIL_LOG_SKIPPED:
+                log_message(f"Trailing skipped: broker stop limit too close | ticket={pos.ticket}")
+            continue
+
+        if not sl_is_improvement(pos, valid_sl, symbol_info):
+            continue
+
+        result = modify_position_sl(pos, valid_sl)
+        if result is not None:
+            side = "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL"
+            old_sl = float(pos.sl or 0.0)
+            trailing_state[str(pos.ticket)] = {
+                "last_sl": valid_sl,
+                "progress": float(progress),
+                "updated_at": datetime.now().isoformat(),
+            }
+            log_message(
+                f"TRAILING SL UPDATED -> ticket={pos.ticket} side={side} "
+                f"progress={progress:.2%} old_sl={old_sl:.2f} new_sl={valid_sl:.2f} "
+                f"entry={float(pos.price_open):.2f} tp={float(pos.tp or 0.0):.2f}"
+            )
+            append_trade_log({
+                "timestamp": datetime.now().isoformat(),
+                "event": "trailing_sl_update",
+                "ticket": pos.ticket,
+                "symbol": pos.symbol,
+                "side": side,
+                "entry_price": float(pos.price_open),
+                "exit_price": exit_price,
+                "old_sl": old_sl,
+                "new_sl": valid_sl,
+                "tp": float(pos.tp or 0.0),
+                "progress_to_tp": float(progress),
+                "profit": float(pos.profit),
+                "result": json.dumps(result, default=str),
+            })
+
+
+def sleep_with_fast_risk_management(symbol: str, state: dict, seconds: float) -> None:
+    """
+    Sleeps in small chunks so trailing SL can react faster than the candle loop.
+    """
+    end_time = time.perf_counter() + max(0.0, float(seconds))
+    interval = max(0.05, float(TRAIL_CHECK_SECONDS))
+
+    while True:
+        remaining = end_time - time.perf_counter()
+        if remaining <= 0:
+            break
+        manage_trailing_stoploss(symbol, state)
+        time.sleep(min(interval, remaining))
+
+
 def manage_timeouts(symbol: str, timeframe: int, state: dict) -> None:
     if DRY_RUN:
         return
@@ -1413,15 +3866,151 @@ def manage_timeouts(symbol: str, timeframe: int, state: dict) -> None:
                 state["positions"].pop(str(pos.ticket), None)
 
 
+def safe_debug_value(debug: dict, key: str, default: float = 0.0) -> float:
+    value = debug.get(key, default)
+    try:
+        if value is None or pd.isna(value):
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def evaluate_context_strength(signal: Signal) -> dict:
+    """
+    Smart execution layer.
+
+    The model still decides the class, but this checks whether the current
+    market context supports that class before sending orders.
+    """
+    debug = getattr(signal, "debug", {}) or {}
+
+    # Prefer the advanced v3 features when available.
+    advanced_bull = safe_debug_value(debug, "liquidity_interaction_bull_score")
+    advanced_bear = safe_debug_value(debug, "liquidity_interaction_bear_score")
+    advanced_diff = safe_debug_value(debug, "liquidity_interaction_score_diff")
+    advanced_pressure = safe_debug_value(debug, "advanced_liquidity_pressure_bias")
+    weighted_reversal = safe_debug_value(debug, "weighted_session_reversal_strength_bias")
+    entry_fusion = safe_debug_value(debug, "entry_zone_liquidity_fusion_bias")
+    structure_norm = safe_debug_value(debug, "structure_bias_normalized")
+
+    # Fallback context from existing raw scores.
+    structure_bull = safe_debug_value(debug, "structure_bull_context_score")
+    structure_bear = safe_debug_value(debug, "structure_bear_context_score")
+    ob_bull = safe_debug_value(debug, "ob_bull_context_score")
+    ob_bear = safe_debug_value(debug, "ob_bear_context_score")
+    fvg_bull = safe_debug_value(debug, "fvg_bull_context_score")
+    fvg_bear = safe_debug_value(debug, "fvg_bear_context_score")
+    htf_reversal = safe_debug_value(debug, "htf_liquidity_reversal_bias")
+    session_reject_decay = safe_debug_value(debug, "session_reject_decay_bias")
+    session_sweep_decay = safe_debug_value(debug, "session_sweep_decay_bias")
+
+    bull_strength = (
+        structure_bull
+        + ob_bull
+        + fvg_bull
+        + max(htf_reversal, 0)
+        + max(advanced_diff, 0)
+        + max(advanced_pressure, 0)
+        + max(weighted_reversal, 0)
+        + max(entry_fusion, 0)
+        + max(structure_norm, 0)
+        + max(session_reject_decay, 0)
+        + max(session_sweep_decay, 0)
+        + advanced_bull
+    )
+
+    bear_strength = (
+        structure_bear
+        + ob_bear
+        + fvg_bear
+        + max(-htf_reversal, 0)
+        + max(-advanced_diff, 0)
+        + max(-advanced_pressure, 0)
+        + max(-weighted_reversal, 0)
+        + max(-entry_fusion, 0)
+        + max(-structure_norm, 0)
+        + max(-session_reject_decay, 0)
+        + max(-session_sweep_decay, 0)
+        + advanced_bear
+    )
+
+    dnt_uncertainty = safe_debug_value(debug, "dnt_uncertainty_score")
+    dnt_low_quality = safe_debug_value(debug, "dnt_low_quality_trade_environment")
+    dnt_conflict = safe_debug_value(debug, "dnt_context_conflict_score")
+
+    # Latest enrichment scores from training. They are used as a cautious live-side
+    # quality check only; the model still makes the prediction.
+    no_trade_risk = safe_debug_value(debug, "no_trade_risk_score")
+    high_quality_setup = safe_debug_value(debug, "high_quality_setup_score")
+    low_quality_setup = safe_debug_value(debug, "low_quality_setup_score")
+    regime_tradeable = safe_debug_value(debug, "regime_tradeable_score")
+    avoid_conflict = safe_debug_value(debug, "avoid_conflicting_signal_score")
+
+    direction = signal_direction(signal.predicted_class)
+    strong_bull = bull_strength >= CONTEXT_STRENGTH_MIN_SCORE
+    strong_bear = bear_strength >= CONTEXT_STRENGTH_MIN_SCORE
+    strong_for_signal = (direction == 1 and strong_bull) or (direction == -1 and strong_bear)
+
+    # Behavior-flow DNT features do not override the model by themselves;
+    # they raise caution only when the environment is genuinely messy.
+    if dnt_low_quality >= 1 or dnt_uncertainty >= 4.0:
+        strong_for_signal = False
+
+    # Conservative guard for the new no-trade intelligence layer.
+    # Avoid blocking solely from one weak score; require a clearly bad combination.
+    if no_trade_risk >= 3.0 or (low_quality_setup > high_quality_setup and avoid_conflict >= 1.5):
+        strong_for_signal = False
+
+    if strong_for_signal:
+        threshold = STRONG_CONTEXT_CONFIDENCE_THRESHOLD
+    else:
+        threshold = WEAK_CONTEXT_CONFIDENCE_THRESHOLD
+
+    return {
+        "bull_strength": bull_strength,
+        "bear_strength": bear_strength,
+        "strong_bull": strong_bull,
+        "strong_bear": strong_bear,
+        "strong_for_signal": strong_for_signal,
+        "dynamic_threshold": threshold,
+        "dnt_uncertainty_score": dnt_uncertainty,
+        "dnt_context_conflict_score": dnt_conflict,
+        "dnt_low_quality_trade_environment": dnt_low_quality,
+        "no_trade_risk_score": no_trade_risk,
+        "high_quality_setup_score": high_quality_setup,
+        "low_quality_setup_score": low_quality_setup,
+        "regime_tradeable_score": regime_tradeable,
+        "avoid_conflicting_signal_score": avoid_conflict,
+    }
+
+
 def should_skip_signal(signal: Signal) -> Optional[str]:
-    if signal.confidence < CONFIDENCE_THRESHOLD:
-        return "low_confidence"
     if ONLY_TRADE_SIGNALS and signal.predicted_class == 0:
         return "neutral_signal"
-    if signal.predicted_class == 1 and not ALLOW_LONG:
+
+    direction = signal_direction(signal.predicted_class)
+    if direction == 1 and not ALLOW_LONG:
         return "long_disabled"
-    if signal.predicted_class == -1 and not ALLOW_SHORT:
+    if direction == -1 and not ALLOW_SHORT:
         return "short_disabled"
+
+    ctx = evaluate_context_strength(signal)
+    threshold = ctx["dynamic_threshold"]
+
+    # Dynamic threshold from validation behavior:
+    # strong context can use lower threshold, weak context must be much stricter.
+    if signal.confidence < threshold:
+        return f"low_confidence_dynamic({threshold:.2f})"
+
+    # Optional hard block: prevents the live bot from taking high-confidence but
+    # context-weak trades, which were the main source of overtrading.
+    if REQUIRE_STRONG_CONTEXT_FOR_ENTRY and not ctx["strong_for_signal"]:
+        if direction == 1:
+            return "weak_bull_context"
+        if direction == -1:
+            return "weak_bear_context"
+
     return None
 
 
@@ -1470,32 +4059,58 @@ def main() -> None:
     ensure_mt5()
     ensure_symbol(SYMBOL)
     state = load_state()
-    print_table("BOT SETTINGS", [("symbol", SYMBOL), ("features", len(feature_list)), ("hold_bars", HOLD_BARS), ("confidence", CONFIDENCE_THRESHOLD), ("lot_size", LOT_SIZE), ("risk_reward", RISK_REWARD_RATIO), ("pending_wait", USE_PENDING_FOR_WAIT_ENTRIES), ("flip_enabled", CLOSE_OPPOSITE_ON_SIGNAL), ("enter_after_flip", ENTER_AFTER_FLIP), ("dry_run", DRY_RUN)])
+    print_table("BOT SETTINGS", [("symbol", SYMBOL), ("features", len(feature_list)), ("hold_bars", HOLD_BARS), ("confidence", CONFIDENCE_THRESHOLD), ("lot_size", LOT_SIZE), ("risk_reward", RISK_REWARD_RATIO), ("pending_wait", USE_PENDING_FOR_WAIT_ENTRIES), ("flip_enabled", CLOSE_OPPOSITE_ON_SIGNAL), ("enter_after_flip", ENTER_AFTER_FLIP), ("dry_run", DRY_RUN), ("m1_history", LIVE_M1_HISTORY_BARS), ("direct_htf", USE_DIRECT_HTF_LEVELS), ("trailing_sl", TRAILING_SL_ENABLED), ("trail_trigger", TRAIL_TRIGGER_PROGRESS), ("trail_lock", TRAIL_LOCK_PROGRESS), ("trail_check_s", TRAIL_CHECK_SECONDS)])
     try:
         while True:
+            loop_t0 = time.perf_counter()
             manage_timeouts(SYMBOL, TIMEFRAME, state)
-            signal = predict_signal(model, feature_list, SYMBOL)
-            if state.get("last_signal_bar_time") == signal.bar_time:
+            manage_trailing_stoploss(SYMBOL, state)
+
+            candle_t0 = time.perf_counter()
+            recent_rates = get_latest_rates(SYMBOL, TIMEFRAME, count=5)
+            latest_closed_bar_time = int(recent_rates.iloc[-2]["time"].timestamp())
+            candle_check_seconds = time.perf_counter() - candle_t0
+
+            if state.get("last_signal_bar_time") == latest_closed_bar_time:
                 save_state(state)
-                time.sleep(POLL_SECONDS)
+                sleep_with_fast_risk_management(SYMBOL, state, POLL_SECONDS)
                 continue
+
+            predict_t0 = time.perf_counter()
+            signal = predict_signal(model, feature_list, SYMBOL)
+            predict_seconds = time.perf_counter() - predict_t0
+
+            if signal.bar_time != latest_closed_bar_time:
+                log_message(
+                    f"Warning: cheap candle check time {latest_closed_bar_time} != "
+                    f"feature row time {signal.bar_time}; using feature row time."
+                )
+
             state["last_signal_bar_time"] = signal.bar_time
-            print_signal_table(signal)
+            log_message(
+                f"Timing: candle_check={candle_check_seconds:.2f}s | "
+                f"predict_signal={predict_seconds:.2f}s | "
+                f"loop_before_print={time.perf_counter() - loop_t0:.2f}s"
+            )
+            context_strength = evaluate_context_strength(signal)
+            print_signal_table(signal, context_strength)
             skip_reason = should_skip_signal(signal)
             if skip_reason:
-                append_trade_log({"timestamp": datetime.now().isoformat(), "event": "signal_skipped", "bar_time": signal.bar_time, "predicted_class": signal.predicted_class, "confidence": signal.confidence, "reason": skip_reason, "probabilities": json.dumps(signal.raw_probabilities), "debug": json.dumps(getattr(signal, "debug", {}))})
+                append_trade_log({"timestamp": datetime.now().isoformat(), "event": "signal_skipped", "bar_time": signal.bar_time, "predicted_class": signal.predicted_class, "confidence": signal.confidence, "reason": skip_reason, "context_strength": json.dumps(context_strength), "probabilities": json.dumps(signal.raw_probabilities), "debug": json.dumps(getattr(signal, "debug", {}))})
                 save_state(state)
-                time.sleep(POLL_SECONDS)
+                sleep_with_fast_risk_management(SYMBOL, state, POLL_SECONDS)
                 continue
             allowed, reason = can_open_new_position(SYMBOL, signal)
             if not allowed:
                 log_message(f"Signal ignored: {reason}")
                 append_trade_log({"timestamp": datetime.now().isoformat(), "event": "signal_skipped", "bar_time": signal.bar_time, "predicted_class": signal.predicted_class, "confidence": signal.confidence, "reason": reason, "debug": json.dumps(getattr(signal, "debug", {}))})
                 save_state(state)
-                time.sleep(POLL_SECONDS)
+                sleep_with_fast_risk_management(SYMBOL, state, POLL_SECONDS)
                 continue
 
-            if CLOSE_OPPOSITE_ON_SIGNAL:
+            strong_signal_for_flip = context_strength["strong_for_signal"] or not FLIP_ONLY_ON_STRONG_CONTEXT
+
+            if CLOSE_OPPOSITE_ON_SIGNAL and strong_signal_for_flip:
                 cancelled_pending = 0
                 if CANCEL_PENDING_ON_FLIP:
                     cancelled_pending = cancel_opposite_pending_orders(SYMBOL, signal)
@@ -1507,7 +4122,7 @@ def main() -> None:
                         f"cancelled_pending={cancelled_pending}"
                     )
                     save_state(state)
-                    time.sleep(FLIP_CLOSE_DELAY_SECONDS)
+                    sleep_with_fast_risk_management(SYMBOL, state, FLIP_CLOSE_DELAY_SECONDS)
 
                     if not ENTER_AFTER_FLIP:
                         append_trade_log({
@@ -1520,7 +4135,7 @@ def main() -> None:
                             "cancelled_pending": cancelled_pending,
                             "debug": json.dumps(getattr(signal, "debug", {})),
                         })
-                        time.sleep(POLL_SECONDS)
+                        sleep_with_fast_risk_management(SYMBOL, state, POLL_SECONDS)
                         continue
 
             result = place_market_order(SYMBOL, signal)
@@ -1529,7 +4144,7 @@ def main() -> None:
                 state.setdefault("positions", {})[ticket] = {"entry_bar_time": signal.bar_time, "predicted_class": signal.predicted_class, "confidence": signal.confidence}
                 append_trade_log({"timestamp": datetime.now().isoformat(), "event": "order_sent" if not DRY_RUN else "dry_run_order", "bar_time": signal.bar_time, "ticket": ticket, "symbol": SYMBOL, "predicted_class": signal.predicted_class, "confidence": signal.confidence, "probabilities": json.dumps(signal.raw_probabilities), "debug": json.dumps(getattr(signal, "debug", {})), "result": json.dumps(result, default=str)})
             save_state(state)
-            time.sleep(POLL_SECONDS)
+            sleep_with_fast_risk_management(SYMBOL, state, POLL_SECONDS)
     except KeyboardInterrupt:
         log_message("Stopped by user")
     finally:
