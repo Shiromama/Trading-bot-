@@ -161,6 +161,23 @@ def load_mt5_file(path: Path) -> pd.DataFrame:
     return df[["open", "high", "low", "close", "volume", "spread_points"]].copy()
 
 
+def resample_ohlcv_from_1m(df_1m: pd.DataFrame, timeframe: str = "1h") -> pd.DataFrame:
+    """Build a higher timeframe OHLCV frame from 1m data as a safe fallback.
+
+    This lets the script run even when an exported H1 CSV is not present.
+    If an actual H1 MT5 export exists, the script still prefers that file.
+    """
+    out = pd.DataFrame({
+        "open": df_1m["open"].resample(timeframe).first(),
+        "high": df_1m["high"].resample(timeframe).max(),
+        "low": df_1m["low"].resample(timeframe).min(),
+        "close": df_1m["close"].resample(timeframe).last(),
+        "volume": df_1m["volume"].resample(timeframe).sum(),
+        "spread_points": df_1m["spread_points"].resample(timeframe).last(),
+    }).dropna(subset=["open", "high", "low", "close"])
+    return out
+
+
 # ========== STEP 3: INDICATORS ==========
 def add_rsi(df: pd.DataFrame, prefix: str, period: int = RSI_PERIOD) -> pd.DataFrame:
     delta = df["close"].diff()
@@ -1855,6 +1872,21 @@ CHOP_FLIP_WINDOW = 20
 DO_NOT_TRADE_CONFLICT_THRESHOLD = 2.0
 
 
+# ========== MARKET CONDITION / ICT-DISRESPECT UPGRADE SETTINGS ==========
+# Added on top of the existing feature stack. These are model inputs only.
+# They do NOT hard-filter trades and do NOT change target labels.
+EXHAUSTION_LOOKBACKS = [10, 20, 50]
+EMA_FAST_WINDOW = 10
+EMA_SLOW_WINDOW = 20
+EMA_TREND_WINDOWS = [5, 10, 20]
+CLEANLINESS_WINDOWS = [10, 20]
+ICT_DISRESPECT_WINDOWS = [5, 10, 20]
+LATE_ENTRY_ATR_STRETCH_THRESHOLD = 2.5
+RSI_EXHAUSTION_HIGH = 70
+RSI_EXHAUSTION_LOW = 30
+ADX_WEAK_LEVEL = 20
+
+
 # ========== DISPLACEMENT / EXPANSION DETECTION ==========
 def add_displacement_expansion_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
     """
@@ -2022,10 +2054,10 @@ def add_multitimeframe_sequence_awareness_features(df: pd.DataFrame) -> pd.DataF
 
     for win in SEQUENCE_WINDOWS:
         # Structure memory
-        out[f"seq_bos_up_count_{win}"] = (c("1m_bos_up") + c("5m_bos_up") + c("15m_bos_up")).rolling(win, min_periods=1).sum()
-        out[f"seq_bos_down_count_{win}"] = (c("1m_bos_down") + c("5m_bos_down") + c("15m_bos_down")).rolling(win, min_periods=1).sum()
-        out[f"seq_choch_up_count_{win}"] = (c("1m_choch_up") + c("5m_choch_up") + c("15m_choch_up")).rolling(win, min_periods=1).sum()
-        out[f"seq_choch_down_count_{win}"] = (c("1m_choch_down") + c("5m_choch_down") + c("15m_choch_down")).rolling(win, min_periods=1).sum()
+        out[f"seq_bos_up_count_{win}"] = (c("1m_bos_up") + c("5m_bos_up") + c("15m_bos_up") + c("1h_bos_up")).rolling(win, min_periods=1).sum()
+        out[f"seq_bos_down_count_{win}"] = (c("1m_bos_down") + c("5m_bos_down") + c("15m_bos_down") + c("1h_bos_down")).rolling(win, min_periods=1).sum()
+        out[f"seq_choch_up_count_{win}"] = (c("1m_choch_up") + c("5m_choch_up") + c("15m_choch_up") + c("1h_choch_up")).rolling(win, min_periods=1).sum()
+        out[f"seq_choch_down_count_{win}"] = (c("1m_choch_down") + c("5m_choch_down") + c("15m_choch_down") + c("1h_choch_down")).rolling(win, min_periods=1).sum()
         out[f"seq_structure_break_bias_{win}"] = (
             out[f"seq_bos_up_count_{win}"] + out[f"seq_choch_up_count_{win}"] -
             out[f"seq_bos_down_count_{win}"] - out[f"seq_choch_down_count_{win}"]
@@ -2035,24 +2067,24 @@ def add_multitimeframe_sequence_awareness_features(df: pd.DataFrame) -> pd.DataF
         )
 
         # Liquidity memory
-        out[f"seq_sweep_high_count_{win}"] = (c("1m_sweep_high") + c("5m_sweep_high") + c("15m_sweep_high")).rolling(win, min_periods=1).sum()
-        out[f"seq_sweep_low_count_{win}"] = (c("1m_sweep_low") + c("5m_sweep_low") + c("15m_sweep_low")).rolling(win, min_periods=1).sum()
-        out[f"seq_reject_high_count_{win}"] = (c("1m_sweep_reject_high") + c("5m_sweep_reject_high") + c("15m_sweep_reject_high")).rolling(win, min_periods=1).sum()
-        out[f"seq_reject_low_count_{win}"] = (c("1m_sweep_reject_low") + c("5m_sweep_reject_low") + c("15m_sweep_reject_low")).rolling(win, min_periods=1).sum()
+        out[f"seq_sweep_high_count_{win}"] = (c("1m_sweep_high") + c("5m_sweep_high") + c("15m_sweep_high") + c("1h_sweep_high")).rolling(win, min_periods=1).sum()
+        out[f"seq_sweep_low_count_{win}"] = (c("1m_sweep_low") + c("5m_sweep_low") + c("15m_sweep_low") + c("1h_sweep_low")).rolling(win, min_periods=1).sum()
+        out[f"seq_reject_high_count_{win}"] = (c("1m_sweep_reject_high") + c("5m_sweep_reject_high") + c("15m_sweep_reject_high") + c("1h_sweep_reject_high")).rolling(win, min_periods=1).sum()
+        out[f"seq_reject_low_count_{win}"] = (c("1m_sweep_reject_low") + c("5m_sweep_reject_low") + c("15m_sweep_reject_low") + c("1h_sweep_reject_low")).rolling(win, min_periods=1).sum()
         out[f"seq_sweep_pressure_bias_{win}"] = out[f"seq_sweep_high_count_{win}"] - out[f"seq_sweep_low_count_{win}"]
         out[f"seq_rejection_reversal_bias_{win}"] = out[f"seq_reject_low_count_{win}"] - out[f"seq_reject_high_count_{win}"]
         out[f"seq_both_sides_swept_{win}"] = ((out[f"seq_sweep_high_count_{win}"] > 0) & (out[f"seq_sweep_low_count_{win}"] > 0)).astype(int)
 
         # Displacement memory
-        out[f"seq_bull_displacement_count_{win}"] = (c("1m_bull_displacement") + c("5m_bull_displacement") + c("15m_bull_displacement")).rolling(win, min_periods=1).sum()
-        out[f"seq_bear_displacement_count_{win}"] = (c("1m_bear_displacement") + c("5m_bear_displacement") + c("15m_bear_displacement")).rolling(win, min_periods=1).sum()
+        out[f"seq_bull_displacement_count_{win}"] = (c("1m_bull_displacement") + c("5m_bull_displacement") + c("15m_bull_displacement") + c("1h_bull_displacement")).rolling(win, min_periods=1).sum()
+        out[f"seq_bear_displacement_count_{win}"] = (c("1m_bear_displacement") + c("5m_bear_displacement") + c("15m_bear_displacement") + c("1h_bear_displacement")).rolling(win, min_periods=1).sum()
         out[f"seq_displacement_bias_{win}"] = out[f"seq_bull_displacement_count_{win}"] - out[f"seq_bear_displacement_count_{win}"]
-        out[f"seq_expansion_count_{win}"] = (c("1m_expansion_bar") + c("5m_expansion_bar") + c("15m_expansion_bar")).rolling(win, min_periods=1).sum()
+        out[f"seq_expansion_count_{win}"] = (c("1m_expansion_bar") + c("5m_expansion_bar") + c("15m_expansion_bar") + c("1h_expansion_bar")).rolling(win, min_periods=1).sum()
 
         # Compression memory
-        out[f"seq_compression_count_{win}"] = (c("1m_is_compressed") + c("5m_is_compressed") + c("15m_is_compressed")).rolling(win, min_periods=1).sum()
+        out[f"seq_compression_count_{win}"] = (c("1m_is_compressed") + c("5m_is_compressed") + c("15m_is_compressed") + c("1h_is_compressed")).rolling(win, min_periods=1).sum()
         out[f"seq_breakout_after_compression_count_{win}"] = (
-            c("1m_breakout_after_compression") + c("5m_breakout_after_compression") + c("15m_breakout_after_compression")
+            c("1m_breakout_after_compression") + c("5m_breakout_after_compression") + c("15m_breakout_after_compression") + c("1h_breakout_after_compression")
         ).rolling(win, min_periods=1).sum()
 
     out["seq_market_pressure_bias_20"] = (
@@ -2153,6 +2185,669 @@ def add_do_not_trade_intelligence_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# ========== LATE-ENTRY / EXHAUSTION FEATURES ==========
+def add_late_entry_exhaustion_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """
+    Adds late-entry and exhaustion context without changing existing logic.
+
+    Purpose:
+      - helps the model detect when price is already stretched after a move
+      - gives RSI/ADX/ATR/MA features more timing context
+      - uses only current and historical candles/indicators
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    close = out["close"] if "close" in out.columns else c(f"{prefix}_ma20")
+    high = out["high"] if "high" in out.columns else close
+    low = out["low"] if "low" in out.columns else close
+
+    atr_col = f"{prefix}_atr14"
+    if atr_col in out.columns:
+        atr_safe = c(atr_col).replace(0, np.nan)
+    else:
+        atr_safe = c(f"{prefix}_range").rolling(14, min_periods=5).mean().replace(0, np.nan)
+
+    rsi = c(f"{prefix}_rsi14", 50.0)
+    adx = c(f"{prefix}_adx14", 0.0)
+    ma_fast = c(f"{prefix}_ma10", close)
+    ma_slow = c(f"{prefix}_ma20", close)
+
+    # ----- RSI / ADX / ATR behavior change -----
+    out[f"{prefix}_rsi_slope_1"] = rsi.diff(1).fillna(0.0)
+    out[f"{prefix}_rsi_slope_3"] = rsi.diff(3).fillna(0.0)
+    out[f"{prefix}_rsi_slope_5"] = rsi.diff(5).fillna(0.0)
+    out[f"{prefix}_rsi_overbought_falling"] = ((rsi >= RSI_EXHAUSTION_HIGH) & (out[f"{prefix}_rsi_slope_3"] < 0)).astype(int)
+    out[f"{prefix}_rsi_oversold_rising"] = ((rsi <= RSI_EXHAUSTION_LOW) & (out[f"{prefix}_rsi_slope_3"] > 0)).astype(int)
+    out[f"{prefix}_rsi_midline_reject_bull"] = ((rsi.shift(1) < 50) & (rsi >= 50) & (out[f"{prefix}_rsi_slope_3"] > 0)).astype(int)
+    out[f"{prefix}_rsi_midline_reject_bear"] = ((rsi.shift(1) > 50) & (rsi <= 50) & (out[f"{prefix}_rsi_slope_3"] < 0)).astype(int)
+
+    out[f"{prefix}_adx_slope_1"] = adx.diff(1).fillna(0.0)
+    out[f"{prefix}_adx_slope_3"] = adx.diff(3).fillna(0.0)
+    out[f"{prefix}_adx_rising_3"] = (out[f"{prefix}_adx_slope_3"] > 0).astype(int)
+    out[f"{prefix}_adx_falling_3"] = (out[f"{prefix}_adx_slope_3"] < 0).astype(int)
+    out[f"{prefix}_adx_weak_and_falling"] = ((adx < ADX_WEAK_LEVEL) & (out[f"{prefix}_adx_slope_3"] < 0)).astype(int)
+
+    out[f"{prefix}_atr_slope_1"] = atr_safe.diff(1).fillna(0.0)
+    out[f"{prefix}_atr_slope_3"] = atr_safe.diff(3).fillna(0.0)
+    out[f"{prefix}_atr_ratio_20"] = atr_safe / (atr_safe.rolling(20, min_periods=5).mean() + EPS)
+    out[f"{prefix}_atr_ratio_50"] = atr_safe / (atr_safe.rolling(50, min_periods=10).mean() + EPS)
+    out[f"{prefix}_atr_expanding"] = ((out[f"{prefix}_atr_ratio_20"] > 1.15) & (out[f"{prefix}_atr_slope_3"] > 0)).astype(int)
+    out[f"{prefix}_atr_exhausted"] = ((out[f"{prefix}_atr_ratio_50"] > 1.50) & (out[f"{prefix}_atr_slope_3"] <= 0)).astype(int)
+
+    # ----- Price stretch from recent high/low and moving averages -----
+    out[f"{prefix}_ema_fast_slow_distance_atr"] = (ma_fast - ma_slow) / (atr_safe + EPS)
+    out[f"{prefix}_close_distance_ma10_atr"] = (close - ma_fast) / (atr_safe + EPS)
+    out[f"{prefix}_close_distance_ma20_atr"] = (close - ma_slow) / (atr_safe + EPS)
+    out[f"{prefix}_abs_close_distance_ma20_atr"] = out[f"{prefix}_close_distance_ma20_atr"].abs()
+
+    for win in EXHAUSTION_LOOKBACKS:
+        recent_high = high.rolling(win, min_periods=max(3, win // 3)).max()
+        recent_low = low.rolling(win, min_periods=max(3, win // 3)).min()
+        recent_range = (recent_high - recent_low).replace(0, np.nan)
+
+        out[f"{prefix}_move_from_recent_low_atr_{win}"] = (close - recent_low) / (atr_safe + EPS)
+        out[f"{prefix}_move_from_recent_high_atr_{win}"] = (recent_high - close) / (atr_safe + EPS)
+        out[f"{prefix}_position_in_recent_range_{win}"] = ((close - recent_low) / (recent_range + EPS)).clip(0, 1)
+        out[f"{prefix}_near_recent_high_exhaustion_{win}"] = (
+            (out[f"{prefix}_move_from_recent_low_atr_{win}"] >= LATE_ENTRY_ATR_STRETCH_THRESHOLD) &
+            (out[f"{prefix}_position_in_recent_range_{win}"] >= 0.80)
+        ).astype(int)
+        out[f"{prefix}_near_recent_low_exhaustion_{win}"] = (
+            (out[f"{prefix}_move_from_recent_high_atr_{win}"] >= LATE_ENTRY_ATR_STRETCH_THRESHOLD) &
+            (out[f"{prefix}_position_in_recent_range_{win}"] <= 0.20)
+        ).astype(int)
+
+    out[f"{prefix}_bull_late_entry_risk"] = (
+        out.get(f"{prefix}_near_recent_high_exhaustion_20", 0) +
+        out[f"{prefix}_rsi_overbought_falling"] +
+        out[f"{prefix}_atr_exhausted"] +
+        (out[f"{prefix}_close_distance_ma20_atr"] > LATE_ENTRY_ATR_STRETCH_THRESHOLD).astype(int)
+    )
+    out[f"{prefix}_bear_late_entry_risk"] = (
+        out.get(f"{prefix}_near_recent_low_exhaustion_20", 0) +
+        out[f"{prefix}_rsi_oversold_rising"] +
+        out[f"{prefix}_atr_exhausted"] +
+        (out[f"{prefix}_close_distance_ma20_atr"] < -LATE_ENTRY_ATR_STRETCH_THRESHOLD).astype(int)
+    )
+
+    return out
+
+
+# ========== EMA / MA TREND-QUALITY FEATURES ==========
+def add_ema_trend_quality_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """
+    Adds trend-quality features based on the existing MA10/MA20 columns.
+
+    Purpose:
+      - helps the model separate clean trend alignment from weak/mixed MA context
+      - keeps the existing MA features unchanged
+      - no future leakage: rolling windows use current/past rows only
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    close = out["close"] if "close" in out.columns else c(f"{prefix}_ma20")
+    ma_fast = c(f"{prefix}_ma10", close)
+    ma_slow = c(f"{prefix}_ma20", close)
+    if f"{prefix}_atr14" in out.columns:
+        atr_safe = c(f"{prefix}_atr14").replace(0, np.nan)
+    else:
+        atr_safe = c(f"{prefix}_range", 0.0).rolling(14, min_periods=5).mean().replace(0, np.nan)
+
+    out[f"{prefix}_ema_fast_slope_pct_1"] = ma_fast.pct_change(1).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out[f"{prefix}_ema_slow_slope_pct_1"] = ma_slow.pct_change(1).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out[f"{prefix}_ema_fast_slope_atr_3"] = ma_fast.diff(3).fillna(0.0) / (atr_safe + EPS)
+    out[f"{prefix}_ema_slow_slope_atr_3"] = ma_slow.diff(3).fillna(0.0) / (atr_safe + EPS)
+    out[f"{prefix}_ema_fast_slope_atr_10"] = ma_fast.diff(10).fillna(0.0) / (atr_safe + EPS)
+    out[f"{prefix}_ema_slow_slope_atr_10"] = ma_slow.diff(10).fillna(0.0) / (atr_safe + EPS)
+
+    out[f"{prefix}_ema_stack_bull"] = ((close > ma_fast) & (ma_fast > ma_slow)).astype(int)
+    out[f"{prefix}_ema_stack_bear"] = ((close < ma_fast) & (ma_fast < ma_slow)).astype(int)
+    out[f"{prefix}_ema_stack_mixed"] = ((out[f"{prefix}_ema_stack_bull"] == 0) & (out[f"{prefix}_ema_stack_bear"] == 0)).astype(int)
+
+    out[f"{prefix}_ema_trend_quality_bull"] = (
+        out[f"{prefix}_ema_stack_bull"] *
+        (out[f"{prefix}_ema_fast_slope_atr_3"] > 0).astype(int) *
+        (out[f"{prefix}_ema_slow_slope_atr_3"] > 0).astype(int) *
+        (c(f"{prefix}_adx_slope_3", 0.0) >= 0).astype(int)
+    )
+    out[f"{prefix}_ema_trend_quality_bear"] = (
+        out[f"{prefix}_ema_stack_bear"] *
+        (out[f"{prefix}_ema_fast_slope_atr_3"] < 0).astype(int) *
+        (out[f"{prefix}_ema_slow_slope_atr_3"] < 0).astype(int) *
+        (c(f"{prefix}_adx_slope_3", 0.0) >= 0).astype(int)
+    )
+
+    for win in EMA_TREND_WINDOWS:
+        out[f"{prefix}_ema_bull_persistence_{win}"] = out[f"{prefix}_ema_stack_bull"].rolling(win, min_periods=1).mean()
+        out[f"{prefix}_ema_bear_persistence_{win}"] = out[f"{prefix}_ema_stack_bear"].rolling(win, min_periods=1).mean()
+        out[f"{prefix}_ema_mixed_persistence_{win}"] = out[f"{prefix}_ema_stack_mixed"].rolling(win, min_periods=1).mean()
+
+    out[f"{prefix}_ema_trend_quality_score"] = (
+        out[f"{prefix}_ema_bull_persistence_20"] - out[f"{prefix}_ema_bear_persistence_20"]
+    ) * (1.0 - out[f"{prefix}_ema_mixed_persistence_20"].clip(0, 1))
+
+    return out
+
+
+# ========== MARKET CLEANLINESS / CHOP FEATURES ==========
+def add_market_cleanliness_chop_features(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """
+    Adds market cleanliness / chop features.
+
+    Purpose:
+      - helps the model avoid messy candle overlap and random two-sided movement
+      - complements ICT features by measuring whether price action is clean enough
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    close = out["close"] if "close" in out.columns else c(f"{prefix}_ma20")
+    high = out["high"] if "high" in out.columns else close
+    low = out["low"] if "low" in out.columns else close
+    rng = c(f"{prefix}_range")
+    body_abs = c(f"{prefix}_body").abs()
+    upper_wick = c(f"{prefix}_upper_wick")
+    lower_wick = c(f"{prefix}_lower_wick")
+
+    out[f"{prefix}_wick_noise_ratio"] = (upper_wick + lower_wick) / (rng + EPS)
+    out[f"{prefix}_body_cleanliness_ratio"] = body_abs / (rng + EPS)
+    out[f"{prefix}_directional_candle"] = np.sign(c(f"{prefix}_body")).fillna(0.0)
+
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    overlap = (np.minimum(high, prev_high) - np.maximum(low, prev_low)).clip(lower=0)
+    prev_range = (prev_high - prev_low).replace(0, np.nan)
+    out[f"{prefix}_candle_overlap_ratio"] = overlap / (np.minimum(rng.replace(0, np.nan), prev_range) + EPS)
+    out[f"{prefix}_inside_prev_candle"] = ((high <= prev_high) & (low >= prev_low)).astype(int)
+    out[f"{prefix}_outside_prev_candle"] = ((high >= prev_high) & (low <= prev_low)).astype(int)
+
+    for win in CLEANLINESS_WINDOWS:
+        net_move = (close - close.shift(win)).abs()
+        path_move = close.diff().abs().rolling(win, min_periods=max(2, win // 3)).sum()
+        out[f"{prefix}_efficiency_ratio_{win}"] = (net_move / (path_move + EPS)).clip(0, 1)
+        out[f"{prefix}_directional_consistency_{win}"] = out[f"{prefix}_directional_candle"].rolling(win, min_periods=1).mean().abs()
+        out[f"{prefix}_overlap_mean_{win}"] = out[f"{prefix}_candle_overlap_ratio"].rolling(win, min_periods=1).mean()
+        out[f"{prefix}_wick_noise_mean_{win}"] = out[f"{prefix}_wick_noise_ratio"].rolling(win, min_periods=1).mean()
+        out[f"{prefix}_inside_candle_count_{win}"] = out[f"{prefix}_inside_prev_candle"].rolling(win, min_periods=1).sum()
+
+    out[f"{prefix}_range_chop_score"] = (
+        (1.0 - out[f"{prefix}_efficiency_ratio_20"].fillna(0.0)) * 2.0 +
+        out[f"{prefix}_overlap_mean_20"].fillna(0.0) +
+        out[f"{prefix}_wick_noise_mean_20"].fillna(0.0) +
+        (1.0 - out[f"{prefix}_directional_consistency_20"].fillna(0.0))
+    )
+    out[f"{prefix}_clean_trend_score"] = (
+        out[f"{prefix}_efficiency_ratio_20"].fillna(0.0) +
+        out[f"{prefix}_directional_consistency_20"].fillna(0.0) +
+        out.get(f"{prefix}_ema_bull_persistence_20", 0) +
+        out.get(f"{prefix}_ema_bear_persistence_20", 0)
+    ) / 4.0
+
+    return out
+
+
+# ========== ICT-DISRESPECT / INVALIDATION FEATURES ==========
+def add_ict_disrespect_invalidation_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds features that describe when ICT-style context is being disrespected.
+
+    Purpose:
+      - lets the model learn when ICT signals are conflicting, weak, late, or failing
+      - does not hardcode a no-trade rule; these are only features
+      - uses current/past rows only
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    # Directional ICT context already built earlier.
+    bull_ict = (
+        c("structure_bull_context_score") +
+        c("ob_bull_context_score") +
+        c("fvg_bull_context_score") +
+        c("liquidity_interaction_bull_score") +
+        c("session_liquidity_reject_low_score") +
+        c("htf_liquidity_reject_low_score")
+    )
+    bear_ict = (
+        c("structure_bear_context_score") +
+        c("ob_bear_context_score") +
+        c("fvg_bear_context_score") +
+        c("liquidity_interaction_bear_score") +
+        c("session_liquidity_reject_high_score") +
+        c("htf_liquidity_reject_high_score")
+    )
+
+    bull_nonict = (
+        c("rsi_adx_bull_context") +
+        c("triple_bull_alignment") +
+        c("bull_bias_strength") +
+        c("1m_ema_trend_quality_bull") +
+        c("5m_ema_trend_quality_bull") +
+        c("15m_ema_trend_quality_bull") +
+        c("seq_bull_displacement_count_20")
+    )
+    bear_nonict = (
+        c("rsi_adx_bear_context") +
+        c("triple_bear_alignment") +
+        c("bear_bias_strength") +
+        c("1m_ema_trend_quality_bear") +
+        c("5m_ema_trend_quality_bear") +
+        c("15m_ema_trend_quality_bear") +
+        c("seq_bear_displacement_count_20")
+    )
+
+    out["ict_bull_context_total"] = bull_ict
+    out["ict_bear_context_total"] = bear_ict
+    out["nonict_bull_confirmation_total"] = bull_nonict
+    out["nonict_bear_confirmation_total"] = bear_nonict
+    out["ict_direction_bias"] = bull_ict - bear_ict
+    out["nonict_direction_bias"] = bull_nonict - bear_nonict
+    out["ict_nonict_bias_agreement"] = (np.sign(out["ict_direction_bias"]) == np.sign(out["nonict_direction_bias"])).astype(int)
+    out["ict_nonict_bias_conflict"] = (
+        (out["ict_direction_bias"].abs() > 0) &
+        (out["nonict_direction_bias"].abs() > 0) &
+        (np.sign(out["ict_direction_bias"]) != np.sign(out["nonict_direction_bias"]))
+    ).astype(int)
+
+    out["ict_bull_without_nonict_confirmation"] = ((bull_ict > bear_ict) & (bull_nonict <= bear_nonict)).astype(int)
+    out["ict_bear_without_nonict_confirmation"] = ((bear_ict > bull_ict) & (bear_nonict <= bull_nonict)).astype(int)
+
+    # Specific failure-style conditions.
+    out["bos_without_displacement"] = (
+        ((c("seq_bos_up_count_10") + c("seq_bos_down_count_10")) > 0) &
+        ((c("seq_bull_displacement_count_10") + c("seq_bear_displacement_count_10")) == 0)
+    ).astype(int)
+
+    out["fvg_without_continuation"] = (
+        ((c("fvg_bull_context_score") + c("fvg_bear_context_score")) > 0) &
+        (c("seq_expansion_count_10") == 0)
+    ).astype(int)
+
+    out["sweep_without_reaction"] = (
+        ((c("sweep_high_context_score") + c("sweep_low_context_score") + c("session_liquidity_sweep_high_score") + c("session_liquidity_sweep_low_score")) > 0) &
+        ((c("sweep_reject_high_context_score") + c("sweep_reject_low_context_score") + c("session_liquidity_reject_high_score") + c("session_liquidity_reject_low_score")) == 0)
+    ).astype(int)
+
+    out["structure_flip_after_ict_signal"] = (
+        (c("seq_structure_instability_20") > 0) &
+        ((bull_ict + bear_ict) > 0)
+    ).astype(int)
+
+    out["ict_signal_in_chop"] = (
+        ((bull_ict + bear_ict) > 0) &
+        ((c("1m_range_chop_score") > 2.5) | (c("dnt_low_quality_trade_environment") == 1))
+    ).astype(int)
+
+    out["ict_late_bull_risk"] = ((bull_ict > bear_ict) & (c("1m_bull_late_entry_risk") >= 2)).astype(int)
+    out["ict_late_bear_risk"] = ((bear_ict > bull_ict) & (c("1m_bear_late_entry_risk") >= 2)).astype(int)
+
+    out["ict_disrespect_score"] = (
+        out["ict_nonict_bias_conflict"] * 2.0 +
+        out["ict_bull_without_nonict_confirmation"] +
+        out["ict_bear_without_nonict_confirmation"] +
+        out["bos_without_displacement"] +
+        out["fvg_without_continuation"] +
+        out["sweep_without_reaction"] +
+        out["structure_flip_after_ict_signal"] +
+        out["ict_signal_in_chop"] +
+        out["ict_late_bull_risk"] +
+        out["ict_late_bear_risk"]
+    )
+
+    for win in ICT_DISRESPECT_WINDOWS:
+        out[f"ict_disrespect_score_mean_{win}"] = out["ict_disrespect_score"].rolling(win, min_periods=1).mean()
+        out[f"ict_disrespect_event_count_{win}"] = (out["ict_disrespect_score"] > 0).astype(int).rolling(win, min_periods=1).sum()
+        out[f"ict_nonict_conflict_count_{win}"] = out["ict_nonict_bias_conflict"].rolling(win, min_periods=1).sum()
+
+    out["ict_currently_disrespected"] = (out["ict_disrespect_score_mean_10"] >= 2.0).astype(int)
+
+    return out
+
+
+# ========== NEXT-STAGE FEATURE ENRICHMENT: FRESHNESS + REGIME + EXECUTION + LIQUIDITY HIERARCHY ==========
+def add_signal_freshness_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds signal freshness/staleness features on top of existing bars_since columns.
+
+    Purpose:
+      - lets the model separate fresh signals from stale/late signals
+      - keeps current features unchanged
+      - uses only current/past rows
+    """
+    out = df.copy()
+
+    def c(name: str, default: float = 9999.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    def min_existing(names: list[str], default: float = 9999.0) -> pd.Series:
+        frames = [c(name, default) for name in names if name in out.columns]
+        if not frames:
+            return pd.Series(default, index=out.index, dtype="float64")
+        return pd.concat(frames, axis=1).min(axis=1).fillna(default)
+
+    def freshness_from_bars(bars: pd.Series, half_life: float = 8.0, max_age: float = 9998.0) -> pd.Series:
+        bars = bars.clip(lower=0, upper=max_age)
+        freshness = np.exp(-bars / max(half_life, EPS))
+        return pd.Series(np.where(bars >= max_age, 0.0, freshness), index=out.index)
+
+    high_sweep_bars = min_existing([
+        "1m_bars_since_sweep_high", "5m_bars_since_sweep_high", "15m_bars_since_sweep_high", "1h_bars_since_sweep_high",
+        "bars_since_swept_prev_daily_high", "bars_since_swept_prev_weekly_high", "bars_since_swept_prev_monthly_high",
+        "bars_since_swept_prev_asia_session_high", "bars_since_swept_prev_london_session_high", "bars_since_swept_prev_ny_session_high",
+    ])
+    low_sweep_bars = min_existing([
+        "1m_bars_since_sweep_low", "5m_bars_since_sweep_low", "15m_bars_since_sweep_low", "1h_bars_since_sweep_low",
+        "bars_since_swept_prev_daily_low", "bars_since_swept_prev_weekly_low", "bars_since_swept_prev_monthly_low",
+        "bars_since_swept_prev_asia_session_low", "bars_since_swept_prev_london_session_low", "bars_since_swept_prev_ny_session_low",
+    ])
+    high_reject_bars = min_existing([
+        "1m_bars_since_sweep_reject_high", "5m_bars_since_sweep_reject_high", "15m_bars_since_sweep_reject_high", "1h_bars_since_sweep_reject_high",
+        "bars_since_reject_prev_daily_high", "bars_since_reject_prev_weekly_high", "bars_since_reject_prev_monthly_high",
+        "bars_since_reject_prev_asia_session_high", "bars_since_reject_prev_london_session_high", "bars_since_reject_prev_ny_session_high",
+    ])
+    low_reject_bars = min_existing([
+        "1m_bars_since_sweep_reject_low", "5m_bars_since_sweep_reject_low", "15m_bars_since_sweep_reject_low", "1h_bars_since_sweep_reject_low",
+        "bars_since_reject_prev_daily_low", "bars_since_reject_prev_weekly_low", "bars_since_reject_prev_monthly_low",
+        "bars_since_reject_prev_asia_session_low", "bars_since_reject_prev_london_session_low", "bars_since_reject_prev_ny_session_low",
+    ])
+    bull_disp_bars = min_existing([
+        "1m_bars_since_bull_displacement", "5m_bars_since_bull_displacement", "15m_bars_since_bull_displacement", "1h_bars_since_bull_displacement"
+    ])
+    bear_disp_bars = min_existing([
+        "1m_bars_since_bear_displacement", "5m_bars_since_bear_displacement", "15m_bars_since_bear_displacement", "1h_bars_since_bear_displacement"
+    ])
+    bos_bars = min_existing([
+        "1m_bars_since_bos_up", "1m_bars_since_bos_down", "5m_bars_since_bos_up", "5m_bars_since_bos_down", "15m_bars_since_bos_up", "15m_bars_since_bos_down", "1h_bars_since_bos_up", "1h_bars_since_bos_down"
+    ])
+    choch_bars = min_existing([
+        "1m_bars_since_choch_up", "1m_bars_since_choch_down", "5m_bars_since_choch_up", "5m_bars_since_choch_down", "15m_bars_since_choch_up", "15m_bars_since_choch_down", "1h_bars_since_choch_up", "1h_bars_since_choch_down"
+    ])
+
+    # Create missing displacement bars-since from displacement flags if not already available.
+    def bars_since_signal(signal: pd.Series, default: float = 9999.0) -> pd.Series:
+        last_idx = pd.Series(np.where(signal.astype(bool), np.arange(len(out)), np.nan), index=out.index).ffill()
+        bar_idx = pd.Series(np.arange(len(out)), index=out.index)
+        return (bar_idx - last_idx).fillna(default)
+
+    for prefix in ["1m", "5m", "15m", "1h"]:
+        if f"{prefix}_bull_displacement" in out.columns and f"{prefix}_bars_since_bull_displacement" not in out.columns:
+            out[f"{prefix}_bars_since_bull_displacement"] = bars_since_signal(out[f"{prefix}_bull_displacement"])
+        if f"{prefix}_bear_displacement" in out.columns and f"{prefix}_bars_since_bear_displacement" not in out.columns:
+            out[f"{prefix}_bars_since_bear_displacement"] = bars_since_signal(out[f"{prefix}_bear_displacement"])
+
+    bull_disp_bars = min_existing(["1m_bars_since_bull_displacement", "5m_bars_since_bull_displacement", "15m_bars_since_bull_displacement", "1h_bars_since_bull_displacement"])
+    bear_disp_bars = min_existing(["1m_bars_since_bear_displacement", "5m_bars_since_bear_displacement", "15m_bars_since_bear_displacement", "1h_bars_since_bear_displacement"])
+
+    out["fresh_bars_since_high_sweep_any"] = high_sweep_bars
+    out["fresh_bars_since_low_sweep_any"] = low_sweep_bars
+    out["fresh_bars_since_high_rejection_any"] = high_reject_bars
+    out["fresh_bars_since_low_rejection_any"] = low_reject_bars
+    out["fresh_bars_since_bull_displacement_any"] = bull_disp_bars
+    out["fresh_bars_since_bear_displacement_any"] = bear_disp_bars
+    out["fresh_bars_since_structure_break_any"] = bos_bars
+    out["fresh_bars_since_choch_any"] = choch_bars
+
+    out["fresh_high_sweep_score"] = freshness_from_bars(high_sweep_bars)
+    out["fresh_low_sweep_score"] = freshness_from_bars(low_sweep_bars)
+    out["fresh_high_rejection_score"] = freshness_from_bars(high_reject_bars)
+    out["fresh_low_rejection_score"] = freshness_from_bars(low_reject_bars)
+    out["fresh_bull_displacement_score"] = freshness_from_bars(bull_disp_bars)
+    out["fresh_bear_displacement_score"] = freshness_from_bars(bear_disp_bars)
+    out["fresh_structure_break_score"] = freshness_from_bars(bos_bars, half_life=12.0)
+    out["fresh_choch_score"] = freshness_from_bars(choch_bars, half_life=12.0)
+
+    out["fresh_bullish_signal_score"] = (
+        out["fresh_low_rejection_score"] + out["fresh_bull_displacement_score"] +
+        (c("seq_bos_up_count_10", 0.0) > 0).astype(int) * out["fresh_structure_break_score"]
+    )
+    out["fresh_bearish_signal_score"] = (
+        out["fresh_high_rejection_score"] + out["fresh_bear_displacement_score"] +
+        (c("seq_bos_down_count_10", 0.0) > 0).astype(int) * out["fresh_structure_break_score"]
+    )
+    out["fresh_signal_bias"] = out["fresh_bullish_signal_score"] - out["fresh_bearish_signal_score"]
+    out["fresh_signal_abs"] = out["fresh_signal_bias"].abs()
+    out["stale_signal_risk_score"] = (
+        (out["fresh_structure_break_score"] < 0.15).astype(int) +
+        (out["fresh_bull_displacement_score"] < 0.15).astype(int) +
+        (out["fresh_bear_displacement_score"] < 0.15).astype(int)
+    )
+
+    return out
+
+
+def add_market_regime_score_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds compact regime scores using existing trend, volatility, compression, and chop features."""
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    adx_score = (c("adx_trend_alignment_score") / 3.0).clip(0, 1)
+    choppy_score = (c("adx_choppy_alignment_score") / 3.0).clip(0, 1)
+    trend_alignment = c("triple_trend_alignment")
+    bull_alignment = c("triple_bull_alignment")
+    bear_alignment = c("triple_bear_alignment")
+    clean_trend = ((c("1m_clean_trend_score") + c("5m_clean_trend_score") + c("15m_clean_trend_score")) / 3.0).clip(0, 1)
+    chop_raw = ((c("1m_range_chop_score") + c("5m_range_chop_score") + c("15m_range_chop_score")) / 9.0).clip(0, 1)
+    compression = ((c("1m_is_compressed") + c("5m_is_compressed") + c("15m_is_compressed") + c("1h_is_compressed")) / 4.0).clip(0, 1)
+    expansion = ((c("1m_expansion_bar") + c("5m_expansion_bar") + c("15m_expansion_bar") + c("1h_expansion_bar")) / 4.0).clip(0, 1)
+    volatility = c("volatility_zscore").clip(-3, 3)
+
+    out["regime_trend_score"] = (
+        adx_score * 0.35 + trend_alignment * 0.20 + clean_trend * 0.25 +
+        ((bull_alignment + bear_alignment) > 0).astype(int) * 0.20
+    ).clip(0, 1)
+    out["regime_chop_score"] = (
+        choppy_score * 0.35 + chop_raw * 0.35 + compression * 0.20 + c("dnt_context_conflict_score") * 0.10
+    ).clip(0, 1)
+    out["regime_expansion_score"] = (
+        expansion * 0.35 + ((volatility + 3.0) / 6.0) * 0.25 +
+        (c("seq_expansion_count_20") / 20.0).clip(0, 1) * 0.20 +
+        (c("seq_displacement_bias_20").abs() / 10.0).clip(0, 1) * 0.20
+    ).clip(0, 1)
+    out["regime_compression_score"] = (
+        compression * 0.45 + (c("seq_compression_count_20") / 20.0).clip(0, 1) * 0.35 +
+        (c("1m_bb_width_compression_ratio") < 0.75).astype(int) * 0.20
+    ).clip(0, 1)
+
+    out["regime_bull_trend_score"] = out["regime_trend_score"] * (
+        (bull_alignment > 0).astype(int) + (c("di_direction_alignment_score") > 0).astype(int)
+    ).clip(0, 1)
+    out["regime_bear_trend_score"] = out["regime_trend_score"] * (
+        (bear_alignment > 0).astype(int) + (c("di_direction_alignment_score") < 0).astype(int)
+    ).clip(0, 1)
+    out["regime_directional_bias"] = out["regime_bull_trend_score"] - out["regime_bear_trend_score"]
+    out["regime_tradeable_score"] = (
+        out["regime_trend_score"] * 0.45 + out["regime_expansion_score"] * 0.25 +
+        (1.0 - out["regime_chop_score"]) * 0.20 + (1.0 - c("dnt_context_conflict_score")) * 0.10
+    ).clip(0, 1)
+
+    return out
+
+
+def add_execution_quality_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds entry location and late-entry quality scores without changing labels or execution logic."""
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    def proximity_from_dist(name: str, scale: float = 1000.0) -> pd.Series:
+        dist = c(name, 10.0).abs().clip(lower=0)
+        return (1.0 / (1.0 + dist * scale)).clip(0, 1)
+
+    close_pos = c("1m_close_pos_in_range", 0.5).clip(0, 1)
+    candle_eff = c("1m_candle_efficiency", 0.0).clip(0, 1)
+    bull_zone_prox = pd.concat([
+        proximity_from_dist("1m_dist_to_bull_ob"), proximity_from_dist("1m_dist_to_bull_fvg"),
+        proximity_from_dist("dist_to_prev_daily_low"), proximity_from_dist("dist_to_prev_weekly_low"), proximity_from_dist("dist_to_prev_monthly_low"),
+        c("session_low_proximity_max", 0.0).clip(0, 1)
+    ], axis=1).max(axis=1)
+    bear_zone_prox = pd.concat([
+        proximity_from_dist("1m_dist_to_bear_ob"), proximity_from_dist("1m_dist_to_bear_fvg"),
+        proximity_from_dist("dist_to_prev_daily_high"), proximity_from_dist("dist_to_prev_weekly_high"), proximity_from_dist("dist_to_prev_monthly_high"),
+        c("session_high_proximity_max", 0.0).clip(0, 1)
+    ], axis=1).max(axis=1)
+
+    daily_mid_dist = (c("daily_position", 0.5) - 0.5).abs() * 2.0
+    prev_daily_mid_dist = (c("prev_daily_range_position", 0.5) - 0.5).abs() * 2.0
+    prev_weekly_mid_dist = (c("prev_weekly_range_position", 0.5) - 0.5).abs() * 2.0
+
+    out["exec_bull_zone_proximity_score"] = bull_zone_prox
+    out["exec_bear_zone_proximity_score"] = bear_zone_prox
+    out["exec_distance_from_daily_mid_score"] = daily_mid_dist.clip(0, 1)
+    out["exec_distance_from_prev_daily_mid_score"] = prev_daily_mid_dist.clip(0, 1)
+    out["exec_distance_from_prev_weekly_mid_score"] = prev_weekly_mid_dist.clip(0, 1)
+    out["exec_bull_location_quality"] = (
+        bull_zone_prox * 0.35 + c("fresh_low_rejection_score") * 0.25 +
+        (1.0 - c("1m_bull_late_entry_risk", 0.0).clip(0, 3) / 3.0) * 0.25 +
+        close_pos * candle_eff * 0.15
+    ).clip(0, 1)
+    out["exec_bear_location_quality"] = (
+        bear_zone_prox * 0.35 + c("fresh_high_rejection_score") * 0.25 +
+        (1.0 - c("1m_bear_late_entry_risk", 0.0).clip(0, 3) / 3.0) * 0.25 +
+        (1.0 - close_pos) * candle_eff * 0.15
+    ).clip(0, 1)
+    out["exec_location_quality_bias"] = out["exec_bull_location_quality"] - out["exec_bear_location_quality"]
+    out["exec_late_entry_risk_score"] = (
+        c("1m_bull_late_entry_risk", 0.0) + c("1m_bear_late_entry_risk", 0.0) +
+        c("ict_late_bull_risk", 0.0) + c("ict_late_bear_risk", 0.0)
+    ).clip(0, 6) / 6.0
+    out["exec_entry_quality_score"] = (
+        out[["exec_bull_location_quality", "exec_bear_location_quality"]].max(axis=1) * 0.55 +
+        c("regime_tradeable_score", 0.0) * 0.30 +
+        (1.0 - out["exec_late_entry_risk_score"]) * 0.15
+    ).clip(0, 1)
+
+    return out
+
+
+def add_liquidity_hierarchy_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds compact liquidity hierarchy and nearest-liquidity priority features."""
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    def prox(name: str, scale: float = 1000.0) -> pd.Series:
+        return (1.0 / (1.0 + c(name, 10.0).abs().clip(lower=0) * scale)).clip(0, 1)
+
+    daily_high_p = prox("dist_to_prev_daily_high")
+    daily_low_p = prox("dist_to_prev_daily_low")
+    weekly_high_p = prox("dist_to_prev_weekly_high")
+    weekly_low_p = prox("dist_to_prev_weekly_low")
+    monthly_high_p = prox("dist_to_prev_monthly_high")
+    monthly_low_p = prox("dist_to_prev_monthly_low")
+    session_high_p = c("session_high_proximity_max", 0.0).clip(0, 1)
+    session_low_p = c("session_low_proximity_max", 0.0).clip(0, 1)
+
+    high_stack = pd.concat([monthly_high_p * 3.0, weekly_high_p * 2.0, daily_high_p * 1.5, session_high_p], axis=1)
+    low_stack = pd.concat([monthly_low_p * 3.0, weekly_low_p * 2.0, daily_low_p * 1.5, session_low_p], axis=1)
+
+    out["liq_high_priority_score"] = high_stack.max(axis=1)
+    out["liq_low_priority_score"] = low_stack.max(axis=1)
+    out["liq_priority_bias"] = out["liq_low_priority_score"] - out["liq_high_priority_score"]
+    out["liq_htf_confluence_score"] = (
+        c("near_prev_monthly_high") + c("near_prev_monthly_low") +
+        c("near_prev_weekly_high") + c("near_prev_weekly_low") +
+        c("near_prev_daily_high") + c("near_prev_daily_low") +
+        c("daily_weekly_liquidity_confluence_high") + c("daily_weekly_liquidity_confluence_low")
+    )
+    out["liq_sweep_reaction_quality"] = (
+        c("htf_liquidity_reject_high_score") + c("htf_liquidity_reject_low_score") +
+        c("session_liquidity_reject_high_score") + c("session_liquidity_reject_low_score") +
+        c("strong_sweep_reject_high_context_score") + c("strong_sweep_reject_low_context_score")
+    )
+    out["liq_nearest_side"] = np.where(out["liq_low_priority_score"] > out["liq_high_priority_score"], 1, np.where(out["liq_high_priority_score"] > out["liq_low_priority_score"], -1, 0))
+    out["liq_nearest_priority_abs"] = out[["liq_high_priority_score", "liq_low_priority_score"]].max(axis=1)
+    out["liq_meaningful_pool_near"] = (out["liq_nearest_priority_abs"] >= 0.5).astype(int)
+    out["liq_reversal_context_quality"] = (
+        (out["liq_low_priority_score"] * c("fresh_low_rejection_score")) -
+        (out["liq_high_priority_score"] * c("fresh_high_rejection_score"))
+    )
+
+    return out
+
+
+def add_trade_avoidance_score_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds final no-trade/low-quality setup scores as model inputs only."""
+    out = df.copy()
+
+    def c(name: str, default: float = 0.0) -> pd.Series:
+        if name in out.columns:
+            return out[name].replace([np.inf, -np.inf], np.nan).fillna(default)
+        return pd.Series(default, index=out.index, dtype="float64")
+
+    out["avoid_conflicting_signal_score"] = (
+        c("dnt_context_conflict_score") * 2.0 +
+        c("ict_nonict_bias_conflict") +
+        c("dnt_conflicting_structure_liquidity") +
+        c("structure_flip_after_ict_signal")
+    ).clip(0, 5) / 5.0
+    out["avoid_low_regime_quality_score"] = (
+        c("regime_chop_score") * 0.40 +
+        c("regime_compression_score") * 0.25 +
+        (1.0 - c("regime_tradeable_score")) * 0.25 +
+        c("dnt_unresolved_compression") * 0.10
+    ).clip(0, 1)
+    out["avoid_stale_or_late_score"] = (
+        c("stale_signal_risk_score") / 3.0 * 0.45 +
+        c("exec_late_entry_risk_score") * 0.35 +
+        (c("fresh_signal_abs") < 0.10).astype(int) * 0.20
+    ).clip(0, 1)
+    out["avoid_liquidity_noise_score"] = (
+        (1.0 - c("liq_nearest_priority_abs").clip(0, 1)) * 0.40 +
+        (c("liq_htf_confluence_score") == 0).astype(int) * 0.25 +
+        (c("liq_sweep_reaction_quality") == 0).astype(int) * 0.20 +
+        c("sweep_without_reaction") * 0.15
+    ).clip(0, 1)
+    out["no_trade_risk_score"] = (
+        out["avoid_conflicting_signal_score"] * 0.30 +
+        out["avoid_low_regime_quality_score"] * 0.25 +
+        out["avoid_stale_or_late_score"] * 0.25 +
+        out["avoid_liquidity_noise_score"] * 0.20
+    ).clip(0, 1)
+    out["low_quality_setup_score"] = (
+        c("dnt_uncertainty_score").clip(0, 8) / 8.0 * 0.35 +
+        out["no_trade_risk_score"] * 0.45 +
+        (1.0 - c("exec_entry_quality_score")) * 0.20
+    ).clip(0, 1)
+    out["high_quality_setup_score"] = (
+        c("exec_entry_quality_score") * 0.45 +
+        c("regime_tradeable_score") * 0.30 +
+        c("liq_nearest_priority_abs").clip(0, 1) * 0.15 +
+        (1.0 - out["no_trade_risk_score"]) * 0.10
+    ).clip(0, 1)
+
+    return out
+
+
 # ========== STEP 5: SL/TP PLANNER ==========
 def add_dynamic_sl_tp_plan(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -2242,24 +2937,38 @@ def add_dynamic_sl_tp_plan(df: pd.DataFrame) -> pd.DataFrame:
 file_1m = find_mt5_file("M1")
 file_5m = find_mt5_file("M5")
 file_15m = find_mt5_file("M15")
+try:
+    file_1h = find_mt5_file("H1")
+except FileNotFoundError:
+    file_1h = None
 
 print(f"[FOUND] M1  -> {file_1m.name}")
 print(f"[FOUND] M5  -> {file_5m.name}")
 print(f"[FOUND] M15 -> {file_15m.name}")
+if file_1h is not None:
+    print(f"[FOUND] H1  -> {file_1h.name}")
+else:
+    print("[FOUND] H1  -> no H1 CSV found; building H1 candles from M1 data")
 
 df_1m_raw = load_mt5_file(file_1m).sort_index()
 df_5m_raw = load_mt5_file(file_5m).sort_index()
 df_15m_raw = load_mt5_file(file_15m).sort_index()
+if file_1h is not None:
+    df_1h_raw = load_mt5_file(file_1h).sort_index()
+else:
+    df_1h_raw = resample_ohlcv_from_1m(df_1m_raw, "1h").sort_index()
 
 print("\n[RAW DATE RANGES]")
 print(f"1m : {df_1m_raw.index.min()} -> {df_1m_raw.index.max()} | rows={len(df_1m_raw)}")
 print(f"5m : {df_5m_raw.index.min()} -> {df_5m_raw.index.max()} | rows={len(df_5m_raw)}")
 print(f"15m: {df_15m_raw.index.min()} -> {df_15m_raw.index.max()} | rows={len(df_15m_raw)}")
+print(f"1H : {df_1h_raw.index.min()} -> {df_1h_raw.index.max()} | rows={len(df_1h_raw)}")
 
 print("\n[FEATURES] Calculating indicators on each ORIGINAL timeframe first")
 print("[FEATURES] 1m: candle features + RSI + ATR + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG + Sweeps/Rejections")
 print("[FEATURES] 5m: candle features + RSI + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG + Sweeps/Rejections")
 print("[FEATURES] 15m: candle features + ADX + Fractal BOS/CHoCH + OB/Breaker Blocks + FVG + Sweeps/Rejections")
+print("[FEATURES] 1H: closed-candle HTF context + RSI + ATR + ADX + structure + sweeps + trend/regime features")
 
 # IMPORTANT:
 # Do NOT reindex 5m/15m raw candles to the 1m index before calculating indicators.
@@ -2267,26 +2976,49 @@ print("[FEATURES] 15m: candle features + ADX + Fractal BOS/CHoCH + OB/Breaker Bl
 df_1m_features = create_features(df_1m_raw, "1m", use_rsi=True, use_atr=True, use_adx=True)
 df_5m_features = create_features(df_5m_raw, "5m", use_rsi=True, use_atr=False, use_adx=True)
 df_15m_features = create_features(df_15m_raw, "15m", use_rsi=False, use_atr=False, use_adx=True)
+df_1h_features = create_features(df_1h_raw, "1h", use_rsi=True, use_atr=True, use_adx=True)
 
 print("[FEATURES] Adding displacement / expansion features")
 df_1m_features = add_displacement_expansion_features(df_1m_features, "1m")
 df_5m_features = add_displacement_expansion_features(df_5m_features, "5m")
 df_15m_features = add_displacement_expansion_features(df_15m_features, "15m")
+df_1h_features = add_displacement_expansion_features(df_1h_features, "1h")
 
 print("[FEATURES] Adding compression -> expansion features")
 df_1m_features = add_compression_expansion_features(df_1m_features, "1m")
 df_5m_features = add_compression_expansion_features(df_5m_features, "5m")
 df_15m_features = add_compression_expansion_features(df_15m_features, "15m")
+df_1h_features = add_compression_expansion_features(df_1h_features, "1h")
+
+print("[FEATURES] Adding late-entry / exhaustion features on original timeframes")
+df_1m_features = add_late_entry_exhaustion_features(df_1m_features, "1m")
+df_5m_features = add_late_entry_exhaustion_features(df_5m_features, "5m")
+df_15m_features = add_late_entry_exhaustion_features(df_15m_features, "15m")
+df_1h_features = add_late_entry_exhaustion_features(df_1h_features, "1h")
+
+print("[FEATURES] Adding EMA/MA trend-quality features on original timeframes")
+df_1m_features = add_ema_trend_quality_features(df_1m_features, "1m")
+df_5m_features = add_ema_trend_quality_features(df_5m_features, "5m")
+df_15m_features = add_ema_trend_quality_features(df_15m_features, "15m")
+df_1h_features = add_ema_trend_quality_features(df_1h_features, "1h")
+
+print("[FEATURES] Adding market cleanliness / chop features on original timeframes")
+df_1m_features = add_market_cleanliness_chop_features(df_1m_features, "1m")
+df_5m_features = add_market_cleanliness_chop_features(df_5m_features, "5m")
+df_15m_features = add_market_cleanliness_chop_features(df_15m_features, "15m")
+df_1h_features = add_market_cleanliness_chop_features(df_1h_features, "1h")
 
 print("[FEATURES] Adding liquidity sweep / rejection features")
 df_1m_features = add_liquidity_sweep_features(df_1m_features, "1m")
 df_5m_features = add_liquidity_sweep_features(df_5m_features, "5m")
 df_15m_features = add_liquidity_sweep_features(df_15m_features, "15m")
+df_1h_features = add_liquidity_sweep_features(df_1h_features, "1h")
 
 print("[FEATURES] Adding Pine/LuxAlgo-style fractal BOS/CHoCH market structure features")
 df_1m_features = add_fractal_structure_features(df_1m_features, "1m")
 df_5m_features = add_fractal_structure_features(df_5m_features, "5m")
 df_15m_features = add_fractal_structure_features(df_15m_features, "15m")
+df_1h_features = add_fractal_structure_features(df_1h_features, "1h")
 
 print("[FEATURES] Adding LuxAlgo-style order block / breaker block features")
 df_1m_features = add_order_block_features(df_1m_features, "1m")
@@ -2306,6 +3038,18 @@ df_1m_features = add_entry_zone_price_features(df_1m_features, "1m")
 def prefixed_features_only(df_source: pd.DataFrame, prefix: str) -> pd.DataFrame:
     cols = [col for col in df_source.columns if col.startswith(f"{prefix}_")]
     return df_source[cols].copy()
+
+
+def closed_candle_features_only(df_source: pd.DataFrame, prefix: str, close_offset: str) -> pd.DataFrame:
+    """Shift HTF feature timestamps to candle close time before merge_asof.
+
+    MT5 exports commonly timestamp candles at their open time. Shifting H1 by +1H
+    means a 10:00 1m row can only use the fully closed 09:00-10:00 H1 candle,
+    not the still-forming 10:00-11:00 candle.
+    """
+    out = prefixed_features_only(df_source, prefix)
+    out.index = out.index + pd.Timedelta(close_offset)
+    return out
 
 
 # Base rows are 1m rows only. Labels and trade entries are still based on 1m.
@@ -2330,10 +3074,20 @@ df = pd.merge_asof(
     direction="backward"
 )
 
+# H1 is added as closed-candle context only.
+df = pd.merge_asof(
+    df.sort_index(),
+    closed_candle_features_only(df_1h_features, "1h", "1h").sort_index(),
+    left_index=True,
+    right_index=True,
+    direction="backward"
+)
+
 print("\n[MERGE CHECK]")
 print(f"Merged rows before cleaning: {len(df)}")
 print(f"Merged date range: {df.index.min()} -> {df.index.max()}")
 print("Used backward merge only: no future 5m/15m candles are allowed.")
+print("1H features are shifted to candle-close time before merging, so only closed 1H candles are used.")
 
 
 # ========== STEP 8: CROSS-TIMEFRAME FEATURES ==========
@@ -2724,6 +3478,132 @@ df["mixed_or_weak_trend"] = (
     (df["ma_bull_alignment_score"].between(1, 2))
 ).astype(int)
 
+# ========== 1H HIGHER-TIMEFRAME CONTEXT FEATURES ==========
+# These are added conservatively on top of the existing 1m/5m/15m stack.
+# The 1H source rows were shifted to candle-close time before merging, so these
+# represent closed 1H context only.
+df["align_15m_1h_ma10"] = (
+    df["15m_ma10_above_ma20"] == df["1h_ma10_above_ma20"]
+).astype(int)
+
+df["quad_trend_alignment"] = (
+    (df["1m_ma10_above_ma20"] == df["5m_ma10_above_ma20"]) &
+    (df["5m_ma10_above_ma20"] == df["15m_ma10_above_ma20"]) &
+    (df["15m_ma10_above_ma20"] == df["1h_ma10_above_ma20"])
+).astype(int)
+
+df["quad_bull_alignment"] = (
+    (df["1m_close_above_ma20"] == 1) &
+    (df["5m_close_above_ma20"] == 1) &
+    (df["15m_close_above_ma20"] == 1) &
+    (df["1h_close_above_ma20"] == 1)
+).astype(int)
+
+df["quad_bear_alignment"] = (
+    (df["1m_close_above_ma20"] == 0) &
+    (df["5m_close_above_ma20"] == 0) &
+    (df["15m_close_above_ma20"] == 0) &
+    (df["1h_close_above_ma20"] == 0)
+).astype(int)
+
+df["momentum_alignment_score_with_1h"] = (
+    np.sign(df["1m_momentum5"]).fillna(0) +
+    np.sign(df["5m_momentum5"]).fillna(0) +
+    np.sign(df["15m_momentum5"]).fillna(0) +
+    np.sign(df["1h_momentum5"]).fillna(0)
+)
+
+df["rsi_1m_5m_1h_alignment"] = (
+    df["1m_rsi_above_50"] + df["5m_rsi_above_50"] + df["1h_rsi_above_50"]
+)
+df["rsi_1h_bullish_context"] = (df["1h_rsi_above_50"] == 1).astype(int)
+df["rsi_1h_bearish_context"] = (df["1h_rsi_above_50"] == 0).astype(int)
+
+df["adx_trend_alignment_score_with_1h"] = (
+    df["1m_adx_trending"] + df["5m_adx_trending"] + df["15m_adx_trending"] + df["1h_adx_trending"]
+)
+df["adx_choppy_alignment_score_with_1h"] = (
+    df["1m_adx_choppy"] + df["5m_adx_choppy"] + df["15m_adx_choppy"] + df["1h_adx_choppy"]
+)
+
+df["market_is_1h_trending"] = (df["1h_adx14"] > 25).astype(int)
+df["market_is_1h_choppy"] = (df["1h_adx14"] < 20).astype(int)
+
+df["di_direction_alignment_score_with_1h"] = (
+    df["1m_di_direction"].fillna(0) + df["5m_di_direction"].fillna(0) +
+    df["15m_di_direction"].fillna(0) + df["1h_di_direction"].fillna(0)
+)
+
+df["structure_bull_context_score_with_1h"] = (
+    df["structure_bull_context_score"] +
+    df["1h_structure_direction"].clip(lower=0) +
+    df["1h_recent_bos_up"] + df["1h_recent_choch_up"]
+)
+df["structure_bear_context_score_with_1h"] = (
+    df["structure_bear_context_score"] +
+    (-df["1h_structure_direction"].clip(upper=0)) +
+    df["1h_recent_bos_down"] + df["1h_recent_choch_down"]
+)
+df["structure_direction_alignment_with_1h"] = (
+    df["structure_direction_alignment"] + df["1h_structure_direction"].fillna(0)
+)
+df["structure_quad_bull_alignment"] = (df["structure_direction_alignment_with_1h"] == 4).astype(int)
+df["structure_quad_bear_alignment"] = (df["structure_direction_alignment_with_1h"] == -4).astype(int)
+
+df["sweep_high_context_score_with_1h"] = df["sweep_high_context_score"] + df["1h_recent_sweep_high"]
+df["sweep_low_context_score_with_1h"] = df["sweep_low_context_score"] + df["1h_recent_sweep_low"]
+df["sweep_reject_high_context_score_with_1h"] = df["sweep_reject_high_context_score"] + df["1h_recent_sweep_reject_high"]
+df["sweep_reject_low_context_score_with_1h"] = df["sweep_reject_low_context_score"] + df["1h_recent_sweep_reject_low"]
+df["strong_sweep_reject_high_context_score_with_1h"] = df["strong_sweep_reject_high_context_score"] + df["1h_recent_strong_sweep_reject_high"]
+df["strong_sweep_reject_low_context_score_with_1h"] = df["strong_sweep_reject_low_context_score"] + df["1h_recent_strong_sweep_reject_low"]
+df["sweep_reversal_context_score_with_1h"] = df["sweep_reversal_context_score"] + df["1h_sweep_reversal_bias"]
+df["sweep_continuation_context_score_with_1h"] = df["sweep_continuation_context_score"] + df["1h_sweep_continuation_bias"]
+
+df["htf_1h_sweep_high_ltf_reject"] = (
+    (df["1h_recent_sweep_high"] == 1) &
+    ((df["1m_recent_sweep_reject_high"] == 1) | (df["5m_recent_sweep_reject_high"] == 1))
+).astype(int)
+df["htf_1h_sweep_low_ltf_reject"] = (
+    (df["1h_recent_sweep_low"] == 1) &
+    ((df["1m_recent_sweep_reject_low"] == 1) | (df["5m_recent_sweep_reject_low"] == 1))
+).astype(int)
+
+df["1h_directional_adx"] = df["1h_di_direction"].fillna(0) * df["1h_adx14"]
+df["htf_directional_adx_score_with_1h"] = (
+    df["1m_directional_adx"] + df["5m_directional_adx"] +
+    df["15m_directional_adx"] + df["1h_directional_adx"]
+) / 4
+
+df["ma_bull_alignment_score_with_1h"] = (
+    df["1m_ma10_above_ma20"] + df["5m_ma10_above_ma20"] +
+    df["15m_ma10_above_ma20"] + df["1h_ma10_above_ma20"]
+)
+df["ma_directional_bias_score_with_1h"] = (
+    (df["1m_ma10_above_ma20"] * 2 - 1) +
+    (df["5m_ma10_above_ma20"] * 2 - 1) +
+    (df["15m_ma10_above_ma20"] * 2 - 1) +
+    (df["1h_ma10_above_ma20"] * 2 - 1)
+)
+df["ma20_slope_strength_mean_with_1h"] = (
+    df["1m_ma20_slope"].abs() + df["5m_ma20_slope"].abs() +
+    df["15m_ma20_slope"].abs() + df["1h_ma20_slope"].abs()
+) / 4
+
+df["bull_bias_strength_with_1h"] = (
+    (df["ma_directional_bias_score_with_1h"].clip(lower=0) / 4) *
+    (df["adx_trend_alignment_score_with_1h"] / 4) *
+    (df["ma20_slope_strength_mean_with_1h"] * 1000 + 1)
+)
+df["bear_bias_strength_with_1h"] = (
+    ((-df["ma_directional_bias_score_with_1h"].clip(upper=0)) / 4) *
+    (df["adx_trend_alignment_score_with_1h"] / 4) *
+    (df["ma20_slope_strength_mean_with_1h"] * 1000 + 1)
+)
+df["mixed_or_weak_trend_with_1h"] = (
+    (df["adx_trend_alignment_score_with_1h"] <= 1) |
+    (df["ma_bull_alignment_score_with_1h"].between(1, 3))
+).astype(int)
+
 
 
 
@@ -2966,6 +3846,25 @@ df = add_multitimeframe_sequence_awareness_features(df)
 
 print("[FEATURES] Adding do-not-trade intelligence: conflict + chop + uncertainty features")
 df = add_do_not_trade_intelligence_features(df)
+
+
+print("[FEATURES] Adding ICT-disrespect / invalidation features")
+df = add_ict_disrespect_invalidation_features(df)
+
+print("[FEATURES] Adding signal freshness features: bars-since + decay scores")
+df = add_signal_freshness_features(df)
+
+print("[FEATURES] Adding market regime score features: trend/chop/expansion/compression")
+df = add_market_regime_score_features(df)
+
+print("[FEATURES] Adding execution quality features: location + late-entry quality")
+df = add_execution_quality_features(df)
+
+print("[FEATURES] Adding liquidity hierarchy features: nearest/priority/confluence")
+df = add_liquidity_hierarchy_features(df)
+
+print("[FEATURES] Adding final trade-avoidance score features")
+df = add_trade_avoidance_score_features(df)
 # ========== STEP 9: SPREAD INFO ==========
 df["spread_points"] = df_1m_raw["spread_points"]
 df["spread_price"] = df["spread_points"] * POINT_VALUE
@@ -3064,6 +3963,30 @@ df.replace([np.inf, -np.inf], 0.0, inplace=True)
 df.sort_index(inplace=True)
 rows_after_clean = len(df)
 
+
+print("\nMarket Condition / ICT-Disrespect feature summary:")
+market_condition_summary_cols = [
+    "1m_bull_late_entry_risk", "1m_bear_late_entry_risk",
+    "1m_ema_trend_quality_bull", "1m_ema_trend_quality_bear",
+    "1m_range_chop_score", "1m_clean_trend_score",
+    "ict_nonict_bias_conflict", "ict_bull_without_nonict_confirmation", "ict_bear_without_nonict_confirmation",
+    "bos_without_displacement", "fvg_without_continuation", "sweep_without_reaction",
+    "structure_flip_after_ict_signal", "ict_signal_in_chop", "ict_currently_disrespected",
+    "ict_disrespect_score", "ict_disrespect_score_mean_10"
+]
+market_condition_summary_cols = [col for col in market_condition_summary_cols if col in df.columns]
+print(df[market_condition_summary_cols].mean().sort_values(ascending=False))
+
+print("\nNext-Stage Feature Enrichment summary:")
+next_stage_summary_cols = [
+    "fresh_bullish_signal_score", "fresh_bearish_signal_score", "fresh_signal_abs",
+    "regime_trend_score", "regime_chop_score", "regime_expansion_score", "regime_compression_score", "regime_tradeable_score",
+    "exec_entry_quality_score", "exec_late_entry_risk_score",
+    "liq_nearest_priority_abs", "liq_htf_confluence_score", "liq_sweep_reaction_quality",
+    "no_trade_risk_score", "low_quality_setup_score", "high_quality_setup_score"
+]
+next_stage_summary_cols = [col for col in next_stage_summary_cols if col in df.columns]
+print(df[next_stage_summary_cols].mean().sort_values(ascending=False))
 
 # ========== STEP 13: SAVE ==========
 output_path = SCRIPT_DIR / "training_dataset.csv"

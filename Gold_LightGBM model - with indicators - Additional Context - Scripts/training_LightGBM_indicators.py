@@ -87,8 +87,8 @@ LEAKAGE_PATTERNS = [
 
 # These are legitimate historical feature names ending in _return.
 ALLOW_RETURN_FEATURE_PATTERNS = [
-    r"^1m_return$", r"^5m_return$", r"^15m_return$",
-    r"^1m_log_return$", r"^5m_log_return$", r"^15m_log_return$",
+    r"^1m_return$", r"^5m_return$", r"^15m_return$", r"^1h_return$",
+    r"^1m_log_return$", r"^5m_log_return$", r"^15m_log_return$", r"^1h_log_return$",
 ]
 
 # ========== LOAD DATASET ==========
@@ -575,6 +575,75 @@ do_not_trade_importance = feature_importance[
     )
 ]
 
+late_entry_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "late_entry|exhaustion|move_from_recent|position_in_recent_range|rsi_slope|rsi_overbought_falling|rsi_oversold_rising|adx_slope|adx_rising|adx_falling|atr_ratio|atr_expanding|atr_exhausted|close_distance_ma|ema_fast_slow_distance_atr",
+        case=False,
+        regex=True
+    )
+]
+
+ema_trend_quality_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "ema_|ma10|ma20|ma_bull_alignment|ma_directional|ma20_slope|bull_bias_strength|bear_bias_strength|triple_bull_alignment|triple_bear_alignment|triple_trend_alignment",
+        case=False,
+        regex=True
+    )
+]
+
+market_cleanliness_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "cleanliness|chop|efficiency_ratio|directional_consistency|overlap|wick_noise|inside_prev_candle|outside_prev_candle|clean_trend_score|range_chop_score",
+        case=False,
+        regex=True
+    )
+]
+
+ict_disrespect_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "ict_|nonict_|without_nonict|without_displacement|without_continuation|without_reaction|structure_flip_after|disrespect|invalidation|bias_conflict|late_bull_risk|late_bear_risk",
+        case=False,
+        regex=True
+    )
+]
+
+
+freshness_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "fresh_|stale_signal|bars_since_bull_displacement|bars_since_bear_displacement",
+        case=False,
+        regex=True
+    )
+]
+
+regime_score_importance = feature_importance[
+    feature_importance.index.str.contains("^regime_", case=False, regex=True)
+]
+
+execution_quality_importance = feature_importance[
+    feature_importance.index.str.contains("^exec_", case=False, regex=True)
+]
+
+liquidity_hierarchy_importance = feature_importance[
+    feature_importance.index.str.contains("^liq_", case=False, regex=True)
+]
+
+trade_avoidance_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "^avoid_|no_trade_risk_score|low_quality_setup_score|high_quality_setup_score",
+        case=False,
+        regex=True
+    )
+]
+
+next_stage_importance = feature_importance[
+    feature_importance.index.str.contains(
+        "fresh_|stale_signal|^regime_|^exec_|^liq_|^avoid_|no_trade_risk_score|low_quality_setup_score|high_quality_setup_score",
+        case=False,
+        regex=True
+    )
+]
+
 print("\nTop Indicator / Regime Features:")
 print(indicator_importance.head(30))
 
@@ -615,6 +684,36 @@ print(sequence_importance.head(40))
 print("\nTop Do-Not-Trade Intelligence Features:")
 print(do_not_trade_importance.head(40))
 
+print("\nTop Late-Entry / Exhaustion Features:")
+print(late_entry_importance.head(40))
+
+print("\nTop EMA/MA Trend-Quality Features:")
+print(ema_trend_quality_importance.head(40))
+
+print("\nTop Market Cleanliness / Chop Features:")
+print(market_cleanliness_importance.head(40))
+
+print("\nTop ICT-Disrespect / Invalidation Features:")
+print(ict_disrespect_importance.head(40))
+
+print("\nTop Next-Stage Enrichment Features:")
+print(next_stage_importance.head(60))
+
+print("\nTop Signal Freshness Features:")
+print(freshness_importance.head(40))
+
+print("\nTop Market Regime Score Features:")
+print(regime_score_importance.head(40))
+
+print("\nTop Execution Quality Features:")
+print(execution_quality_importance.head(40))
+
+print("\nTop Liquidity Hierarchy Features:")
+print(liquidity_hierarchy_importance.head(40))
+
+print("\nTop Trade-Avoidance Score Features:")
+print(trade_avoidance_importance.head(40))
+
 # ========== SAVE OUTPUTS ==========
 model_path = SCRIPT_DIR / "lgbm_model.pkl"
 features_path = SCRIPT_DIR / "lgbm_features.pkl"
@@ -635,6 +734,16 @@ displacement_importance_path = SCRIPT_DIR / "lgbm_displacement_feature_importanc
 compression_importance_path = SCRIPT_DIR / "lgbm_compression_feature_importance.csv"
 sequence_importance_path = SCRIPT_DIR / "lgbm_sequence_feature_importance.csv"
 do_not_trade_importance_path = SCRIPT_DIR / "lgbm_do_not_trade_feature_importance.csv"
+late_entry_importance_path = SCRIPT_DIR / "lgbm_late_entry_exhaustion_feature_importance.csv"
+ema_trend_quality_importance_path = SCRIPT_DIR / "lgbm_ema_trend_quality_feature_importance.csv"
+market_cleanliness_importance_path = SCRIPT_DIR / "lgbm_market_cleanliness_feature_importance.csv"
+ict_disrespect_importance_path = SCRIPT_DIR / "lgbm_ict_disrespect_feature_importance.csv"
+freshness_importance_path = SCRIPT_DIR / "lgbm_signal_freshness_feature_importance.csv"
+regime_score_importance_path = SCRIPT_DIR / "lgbm_regime_score_feature_importance.csv"
+execution_quality_importance_path = SCRIPT_DIR / "lgbm_execution_quality_feature_importance.csv"
+liquidity_hierarchy_importance_path = SCRIPT_DIR / "lgbm_liquidity_hierarchy_feature_importance.csv"
+trade_avoidance_importance_path = SCRIPT_DIR / "lgbm_trade_avoidance_feature_importance.csv"
+next_stage_importance_path = SCRIPT_DIR / "lgbm_next_stage_enrichment_feature_importance.csv"
 metadata_path = SCRIPT_DIR / "lgbm_training_metadata.pkl"
 
 joblib.dump(model, model_path)
@@ -655,6 +764,16 @@ displacement_importance.to_csv(displacement_importance_path, header=["importance
 compression_importance.to_csv(compression_importance_path, header=["importance"])
 sequence_importance.to_csv(sequence_importance_path, header=["importance"])
 do_not_trade_importance.to_csv(do_not_trade_importance_path, header=["importance"])
+late_entry_importance.to_csv(late_entry_importance_path, header=["importance"])
+ema_trend_quality_importance.to_csv(ema_trend_quality_importance_path, header=["importance"])
+market_cleanliness_importance.to_csv(market_cleanliness_importance_path, header=["importance"])
+ict_disrespect_importance.to_csv(ict_disrespect_importance_path, header=["importance"])
+freshness_importance.to_csv(freshness_importance_path, header=["importance"])
+regime_score_importance.to_csv(regime_score_importance_path, header=["importance"])
+execution_quality_importance.to_csv(execution_quality_importance_path, header=["importance"])
+liquidity_hierarchy_importance.to_csv(liquidity_hierarchy_importance_path, header=["importance"])
+trade_avoidance_importance.to_csv(trade_avoidance_importance_path, header=["importance"])
+next_stage_importance.to_csv(next_stage_importance_path, header=["importance"])
 
 metadata = {
     "best_threshold": BEST_THRESHOLD,
@@ -672,6 +791,7 @@ metadata = {
     "uses_live_style_sl_tp_labeling": True,
     "uses_htf_bias_strength_features": True,
     "uses_htf_safe_backward_merge_dataset": True,
+    "uses_closed_1h_context_features": True,
     "uses_order_block_breaker_features": True,
     "uses_fair_value_gap_features": True,
     "uses_fractal_bos_choch_structure_features": True,
@@ -692,6 +812,16 @@ metadata = {
     "uses_compression_expansion_features": True,
     "uses_multitimeframe_sequence_awareness_features": True,
     "uses_do_not_trade_intelligence_features": True,
+    "uses_late_entry_exhaustion_features": True,
+    "uses_ema_trend_quality_features": True,
+    "uses_market_cleanliness_chop_features": True,
+    "uses_ict_disrespect_invalidation_features": True,
+    "uses_signal_freshness_features": True,
+    "uses_market_regime_score_features": True,
+    "uses_execution_quality_features": True,
+    "uses_liquidity_hierarchy_features": True,
+    "uses_trade_avoidance_score_features": True,
+    "uses_next_stage_enrichment_features": True,
     "keeps_existing_rolling_daily_context_features": True,
     "true_session_htf_liquidity_features": [
         "prev_daily_high", "prev_daily_low", "prev_daily_mid", "prev_daily_range",
@@ -778,9 +908,42 @@ metadata = {
             "dnt_both_sides_swept_20", "dnt_weak_displacement_environment",
             "dnt_unresolved_compression", "dnt_conflicting_structure_liquidity",
             "dnt_uncertainty_score", "dnt_low_quality_trade_environment"
+        ],
+        "market_condition_ict_disrespect": [
+            "bull_late_entry_risk", "bear_late_entry_risk",
+            "ema_trend_quality_bull", "ema_trend_quality_bear",
+            "range_chop_score", "clean_trend_score",
+            "ict_nonict_bias_conflict", "ict_bull_without_nonict_confirmation",
+            "ict_bear_without_nonict_confirmation", "bos_without_displacement",
+            "fvg_without_continuation", "sweep_without_reaction",
+            "structure_flip_after_ict_signal", "ict_disrespect_score",
+            "ict_currently_disrespected"
         ]
     },
-    "note": "Live-style SL/TP training script: excludes leakage/result columns including live_style_* and label_* helper columns, evaluates all 7 entry-style classes, computes returns using the predicted class candidate return, and reports feature importance groups including behavior-flow upgrades."
+    "next_stage_enrichment_feature_groups": {
+        "signal_freshness": [
+            "fresh_high_sweep_score", "fresh_low_sweep_score", "fresh_high_rejection_score", "fresh_low_rejection_score",
+            "fresh_bull_displacement_score", "fresh_bear_displacement_score", "fresh_structure_break_score",
+            "fresh_bullish_signal_score", "fresh_bearish_signal_score", "fresh_signal_bias", "stale_signal_risk_score"
+        ],
+        "market_regime_scores": [
+            "regime_trend_score", "regime_chop_score", "regime_expansion_score", "regime_compression_score",
+            "regime_bull_trend_score", "regime_bear_trend_score", "regime_directional_bias", "regime_tradeable_score"
+        ],
+        "execution_quality": [
+            "exec_bull_zone_proximity_score", "exec_bear_zone_proximity_score", "exec_bull_location_quality",
+            "exec_bear_location_quality", "exec_location_quality_bias", "exec_late_entry_risk_score", "exec_entry_quality_score"
+        ],
+        "liquidity_hierarchy": [
+            "liq_high_priority_score", "liq_low_priority_score", "liq_priority_bias", "liq_htf_confluence_score",
+            "liq_sweep_reaction_quality", "liq_nearest_side", "liq_nearest_priority_abs", "liq_meaningful_pool_near"
+        ],
+        "trade_avoidance_scores": [
+            "avoid_conflicting_signal_score", "avoid_low_regime_quality_score", "avoid_stale_or_late_score",
+            "avoid_liquidity_noise_score", "no_trade_risk_score", "low_quality_setup_score", "high_quality_setup_score"
+        ]
+    },
+    "note": "Live-style SL/TP training script: excludes leakage/result columns including live_style_* and label_* helper columns, evaluates all 7 entry-style classes, computes returns using the predicted class candidate return, and reports feature importance groups including behavior-flow, late-entry/exhaustion, EMA trend-quality, market-cleanliness, and ICT-disrespect upgrades."
 }
 joblib.dump(metadata, metadata_path)
 
@@ -804,6 +967,16 @@ print(f"Displacement feature importance saved to: {displacement_importance_path}
 print(f"Compression feature importance saved to: {compression_importance_path}")
 print(f"Sequence-awareness feature importance saved to: {sequence_importance_path}")
 print(f"Do-not-trade feature importance saved to: {do_not_trade_importance_path}")
+print(f"Late-entry/exhaustion feature importance saved to: {late_entry_importance_path}")
+print(f"EMA/MA trend-quality feature importance saved to: {ema_trend_quality_importance_path}")
+print(f"Market cleanliness/chop feature importance saved to: {market_cleanliness_importance_path}")
+print(f"ICT-disrespect/invalidation feature importance saved to: {ict_disrespect_importance_path}")
+print(f"Signal freshness feature importance saved to: {freshness_importance_path}")
+print(f"Market regime score feature importance saved to: {regime_score_importance_path}")
+print(f"Execution quality feature importance saved to: {execution_quality_importance_path}")
+print(f"Liquidity hierarchy feature importance saved to: {liquidity_hierarchy_importance_path}")
+print(f"Trade-avoidance feature importance saved to: {trade_avoidance_importance_path}")
+print(f"Next-stage enrichment feature importance saved to: {next_stage_importance_path}")
 print(f"Training metadata saved to: {metadata_path}")
 
 if len(filtered_test) > 0:
